@@ -1455,7 +1455,7 @@ function saveTransfer() {
   setTimeout(()=>showPage('home'),600);
 }
 
-
+function saveEntry() {
   const amount = parseFloat(document.getElementById('f-amount').value);
   if (!amount||amount<=0) { showToast('Enter a valid amount',true); return; }
   if (!state.selectedCat) { showToast('Select a category',true); return; }
