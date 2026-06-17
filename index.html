@@ -2540,6 +2540,30 @@ function ensureProjectExists(projectName, client) {
   return proj;
 }
 
+function ensureSupplierExists(projectName, supplierName) {
+  // Finds or creates a REAL tracked supplier object inside the matching project's suppliers[] list,
+  // so any supplier name typed anywhere (Add Entry screen or the dedicated form) always shows up
+  // under that project's "Suppliers & workers" section with a real, editable phone number field.
+  if (!projectName || !supplierName) return null;
+  const proj = ensureProjectExists(projectName, '');
+  if (!proj) return null;
+  if (!proj.suppliers) proj.suppliers = [];
+  let sup = proj.suppliers.find(s=>s.name.toLowerCase()===supplierName.toLowerCase());
+  if (sup) return sup;
+  sup = {
+    id: Date.now().toString()+Math.floor(Math.random()*1000),
+    name: supplierName,
+    role: '',
+    phone: '',
+    budget: 0,
+    notes: '',
+    payments: [],
+    autoCreated: true
+  };
+  proj.suppliers.push(sup);
+  return sup;
+}
+
 function saveEntry() {
   const amount = parseFloat(document.getElementById('f-amount').value);
   if (!amount||amount<=0) { showToast('Enter a valid amount',true); return; }
@@ -2583,6 +2607,17 @@ function saveEntry() {
     synced: false
   };
   state.entries.unshift(entry);
+
+  // If this expense has both a project AND a supplier name, make sure that supplier is a REAL
+  // tracked object (with a phone field) inside the project's Suppliers & workers list — and
+  // record this expense as an actual payment against them, so their "paid" total is accurate.
+  if (isCek && !isIncome && project && supplier) {
+    const sup = ensureSupplierExists(project, supplier);
+    if (sup) {
+      if (!sup.payments) sup.payments = [];
+      sup.payments.push({ id: 'entry_'+entry.id, amount, date, note: description });
+    }
+  }
 
   // Track client payments separately so we can show "what I got from client X across projects"
   if (isCek && isIncome && client) {
@@ -2856,6 +2891,10 @@ function saveEditedEntry() {
       if (a.id.startsWith(linkId)) { a.amount = a.amount<0 ? -amount : amount; a.date = date; }
     });
   } else {
+    // Before changing anything, remember the old supplier link so we can clean it up if it changes
+    const oldProject = entry.project;
+    const oldSupplier = entry.supplier;
+
     entry.type = newType;
     entry.account = newAccount;
     entry.category = category;
@@ -2874,6 +2913,22 @@ function saveEditedEntry() {
     } else {
       // No longer a client payment (changed away from CEK income) — remove any stale record
       state.clientPayments = state.clientPayments.filter(cp=>cp.id!==entry.id);
+    }
+
+    // Remove the old linked supplier payment if the supplier or project changed (or no longer applies)
+    if (oldProject && oldSupplier) {
+      const oldProj = state.cekProjects.find(p=>p.name===oldProject);
+      const oldSup = oldProj ? (oldProj.suppliers||[]).find(s=>s.name.toLowerCase()===oldSupplier.toLowerCase()) : null;
+      if (oldSup && oldSup.payments) oldSup.payments = oldSup.payments.filter(pay=>pay.id!=='entry_'+entry.id);
+    }
+    // Re-link (or create) the supplier payment record to match the current values
+    if (newAccount==='CEK' && newType==='expense' && project && supplier) {
+      const sup = ensureSupplierExists(project, supplier);
+      if (sup) {
+        if (!sup.payments) sup.payments = [];
+        sup.payments = sup.payments.filter(pay=>pay.id!=='entry_'+entry.id);
+        sup.payments.push({ id:'entry_'+entry.id, amount, date, note:description });
+      }
     }
   }
 
@@ -2913,6 +2968,16 @@ function confirmDelete(idx) {
     const cp = state.clientPayments.find(cp=>cp.id===entry.id);
     if (cp) state.deletedIds.push(cp.id);
     state.clientPayments = state.clientPayments.filter(cp=>cp.id!==entry.id);
+  }
+  // If this was a CEK expense with a supplier, remove the linked payment record from that supplier too
+  if (entry.type==='expense' && entry.account==='CEK' && entry.supplier && entry.project) {
+    const proj = state.cekProjects.find(p=>p.name===entry.project);
+    const sup = proj ? (proj.suppliers||[]).find(s=>s.name.toLowerCase()===entry.supplier.toLowerCase()) : null;
+    if (sup && sup.payments) {
+      const linkedPay = sup.payments.find(pay=>pay.id==='entry_'+entry.id);
+      if (linkedPay) state.deletedIds.push(linkedPay.id);
+      sup.payments = sup.payments.filter(pay=>pay.id!=='entry_'+entry.id);
+    }
   }
   state.entries.splice(idx,1); saveState(); renderAll(); showToast('Entry deleted');
 }
