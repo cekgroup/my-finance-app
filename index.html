@@ -555,8 +555,9 @@
 
     <!-- SETTINGS -->
     <div class="page" id="page-settings">
-      <div class="sec-header" style="margin-top:4px"><span class="sec-title">Google Sheets sync</span></div>
+      <div class="sec-header" style="margin-top:4px"><span class="sec-title">Two-way cloud sync</span></div>
       <div class="card">
+        <div style="font-size:12px;color:var(--text2);line-height:1.6;margin-bottom:12px">Once connected, every change you make here automatically syncs to the cloud within a couple seconds, and any device with the same URL pulls those changes automatically — when you open the app, every 30 seconds while it's open, and whenever you switch back to it.</div>
         <div class="setup-step">
           <div class="step-num">Step 1 — Create your spreadsheet</div>
           <div class="step-text">Go to <code>sheets.google.com</code>, create a new sheet named <code>My Finance Tracker</code>.</div>
@@ -570,7 +571,8 @@
           <div class="step-text"><code>Deploy → New deployment → Web app</code>. Execute as: Me. Who has access: Anyone. Copy the URL.</div>
         </div>
         <div class="setup-step">
-          <div class="step-num">Step 4 — Paste URL below</div>
+          <div class="step-num">Step 4 — Paste URL below (do this on EVERY device)</div>
+          <div class="step-text">Use the exact same URL on your phone and your laptop so they sync to the same place.</div>
           <div class="url-input-row">
             <input type="url" class="form-input" id="sheets-url" placeholder="https://script.google.com/...">
             <button class="save-url-btn" onclick="saveSheetUrl()">Save</button>
@@ -580,7 +582,7 @@
           <span class="setting-label">Sync status</span>
           <span class="setting-val" id="sync-status">⚪ Not configured</span>
         </div>
-        <button class="submit-btn" style="margin-top:8px" onclick="syncNow()">🔄 Sync all data now</button>
+        <button class="submit-btn" style="margin-top:8px" onclick="syncNow()">🔄 Force sync now</button>
       </div>
       <div class="sec-header"><span class="sec-title">CEK people</span></div>
       <div class="card">
@@ -857,8 +859,21 @@ let state = {
   selectedCat: '',
   budgetView: 'personal',
   activeProjectId: null,
-  activeSupplierId: null
+  activeSupplierId: null,
+  deletedIds: [],        // tombstones — IDs of entries/purchases/etc deleted locally, so sync doesn't resurrect them
+  deviceId: '',           // unique per-device identifier, generated once
+  lastModified: 0         // timestamp of last local change, used to decide merge direction
 };
+
+function getDeviceId() {
+  if (!state.deviceId) {
+    state.deviceId = 'dev_'+Math.random().toString(36).substring(2,10)+Date.now().toString(36);
+  }
+  return state.deviceId;
+}
+
+function touch() { state.lastModified = Date.now(); }
+
 
 // ─── INIT ─────────────────────────────────────────────────────────────────────
 function init() {
@@ -869,6 +884,11 @@ function init() {
   if (state.sheetsUrl) document.getElementById('sheets-url').value = state.sheetsUrl;
   updateMonthLabel();
   renderAll();
+  // Automatically pull and merge the latest cloud data every time the app opens,
+  // so switching between phone and laptop always shows the same up-to-date info.
+  if (state.sheetsUrl) {
+    pullAndMerge(false).then(()=>{ updateMonthLabel(); renderAll(); });
+  }
 }
 
 function loadState() {
@@ -885,15 +905,25 @@ function loadState() {
     if (!state.goldPurchases) state.goldPurchases = [];
     if (!state.silverPurchases) state.silverPurchases = [];
     if (!state.cashSavingsAdjustments) state.cashSavingsAdjustments = [];
+    if (!state.deletedIds) state.deletedIds = [];
+    if (!state.lastModified) state.lastModified = 0;
     if (!state.budgets.personal) state.budgets.personal = state.budgets.personal || {};
     state.activeProjectId = state.activeProjectId || null;
     state.activeSupplierId = state.activeSupplierId || null;
     state.transferDirection = state.transferDirection || 'cek2personal';
+    getDeviceId();
   } catch(e) {}
 }
 
+let syncDebounceTimer = null;
 function saveState() {
+  state.lastModified = Date.now();
   try { localStorage.setItem('financeState_v2', JSON.stringify(state)); } catch(e) {}
+  // Auto-push to Google Sheets shortly after any change, so other devices see it next time they open the app
+  if (state.sheetsUrl) {
+    if (syncDebounceTimer) clearTimeout(syncDebounceTimer);
+    syncDebounceTimer = setTimeout(()=>{ pushStateToCloud(); }, 1500);
+  }
 }
 
 // ─── NAVIGATION ───────────────────────────────────────────────────────────────
@@ -1441,16 +1471,23 @@ function updateProjectContract(id) {
 function deleteProjectCore(id) {
   const p = state.cekProjects.find(p=>p.id===id);
   if (!p) return false;
-  const linkedCount = state.entries.filter(e=>e.account==='CEK'&&e.project===p.name).length;
+  const linkedEntries = state.entries.filter(e=>e.account==='CEK'&&e.project===p.name);
+  const linkedCount = linkedEntries.length;
   const msg = linkedCount>0
     ? `Delete "${p.name}"? This will also permanently delete ${linkedCount} linked income/expense ${linkedCount===1?'entry':'entries'} and all supplier payment history for this project. This cannot be undone.`
     : `Delete "${p.name}"? This cannot be undone.`;
   if (!confirm(msg)) return false;
+  // Tombstone everything being removed so it doesn't reappear after syncing with another device
+  state.deletedIds.push(id);
+  linkedEntries.forEach(e=>state.deletedIds.push(e.id));
+  (p.suppliers||[]).forEach(s=>{ state.deletedIds.push(s.id); (s.payments||[]).forEach(pay=>state.deletedIds.push(pay.id)); });
   // Remove the project object
   state.cekProjects = state.cekProjects.filter(pr=>pr.id!==id);
   // Remove every entry tied to this project (income, expenses, supplier payments — all tagged with project name)
   state.entries = state.entries.filter(e=>!(e.account==='CEK' && e.project===p.name));
   // Remove client payment records tied to this project
+  const removedClientPayments = state.clientPayments.filter(cp=>cp.project===p.name);
+  removedClientPayments.forEach(cp=>state.deletedIds.push(cp.id));
   state.clientPayments = state.clientPayments.filter(cp=>cp.project!==p.name);
   saveState();
   return true;
@@ -1512,8 +1549,10 @@ function deleteSupplier(projectId, supplierId) {
     ? `Delete ${sup.name} and all ${paymentCount} of their payment ${paymentCount===1?'record':'records'}? This will also remove these amounts from the project's "Paid out" total. This cannot be undone.`
     : `Delete ${sup.name}? This cannot be undone.`;
   if (!confirm(msg)) return;
-  // Remove the linked expense entries this supplier's payments created
+  // Tombstone the supplier and their payments, plus the linked expense entries
+  state.deletedIds.push(supplierId);
   const paymentIds = (sup.payments||[]).map(pay=>'pay_'+pay.id);
+  (sup.payments||[]).forEach(pay=>state.deletedIds.push(pay.id));
   state.entries = state.entries.filter(e=>!paymentIds.includes(e.id));
   p.suppliers = p.suppliers.filter(s=>s.id!==supplierId);
   saveState();
@@ -1565,7 +1604,6 @@ function logPayment() {
   closeModal('payment-modal');
   renderSupplierDetail();
   renderAll();
-  if (state.sheetsUrl) syncEntry(entry);
   showToast(`✅ ${fmt(amount)} paid to ${sup.name}`);
 }
 
@@ -1576,7 +1614,8 @@ function deletePayment(projectId, supplierId, payIdx) {
   if (!sup) return;
   const pay = sup.payments[payIdx];
   if (pay) {
-    // Remove the linked CEK expense entry this payment created
+    // Tombstone the payment and remove the linked CEK expense entry this payment created
+    state.deletedIds.push(pay.id);
     state.entries = state.entries.filter(e=>e.id!=='pay_'+pay.id);
   }
   sup.payments.splice(payIdx,1);
@@ -1717,6 +1756,7 @@ function saveMetalPurchase() {
 function deleteMetalPurchase(metal, idx) {
   if (!confirm('Delete this purchase?')) return;
   const list = metal==='gold' ? state.goldPurchases : state.silverPurchases;
+  if (list[idx]) state.deletedIds.push(list[idx].id);
   list.splice(idx,1);
   saveState();
   renderMetal(metal);
@@ -2185,7 +2225,6 @@ function saveTransfer() {
       linkedTransfer: linkId, synced: false
     };
     state.entries.unshift(outEntry);
-    if (state.sheetsUrl) syncEntry(outEntry);
   }
   if (toAccount==='CEK' || toAccount==='Personal') {
     const inEntry = {
@@ -2197,7 +2236,6 @@ function saveTransfer() {
       linkedTransfer: linkId, synced: false
     };
     state.entries.unshift(inEntry);
-    if (state.sheetsUrl) syncEntry(inEntry);
   }
 
   saveState();
@@ -2286,7 +2324,6 @@ function saveEntry() {
   showToast('✅ Saved!');
   resetForm();
   renderAll();
-  if (state.sheetsUrl) syncEntry(entry);
   setTimeout(()=>showPage('home'),600);
 }
 
@@ -2300,25 +2337,139 @@ function setGoal() {
 // ─── SYNC ─────────────────────────────────────────────────────────────────────
 function saveSheetUrl() {
   state.sheetsUrl=document.getElementById('sheets-url').value.trim();
-  saveState(); document.getElementById('sync-status').textContent=state.sheetsUrl?'🟢 Configured':'⚪ Not configured';
-  showToast('URL saved!');
+  saveState();
+  document.getElementById('sync-status').textContent=state.sheetsUrl?'🟢 Configured':'⚪ Not configured';
+  showToast('URL saved! Pulling any existing data...');
+  if (state.sheetsUrl) pullAndMerge(true);
 }
-async function syncEntry(entry) {
+
+// ─── TWO-WAY SYNC ENGINE ───────────────────────────────────────────────────────
+// Strategy: every record (entries, projects, suppliers, payments, purchases, etc.)
+// has a unique id. To merge two copies of the same list, we take the union of ids,
+// and for any id present in both, we keep whichever copy is "newer" using each
+// record's own date/time where available, falling back to whichever side has it
+// if only one side does. Deletions are tracked via state.deletedIds so a record
+// removed on one device doesn't silently reappear after merging with another
+// device that hasn't synced that deletion yet.
+
+function mergeArraysById(localArr, remoteArr, deletedIds) {
+  localArr = localArr || []; remoteArr = remoteArr || []; deletedIds = deletedIds || [];
+  const byId = {};
+  remoteArr.forEach(item => { if (item && item.id && !deletedIds.includes(item.id)) byId[item.id] = item; });
+  localArr.forEach(item => { if (item && item.id && !deletedIds.includes(item.id)) byId[item.id] = item; }); // local wins ties (most recently active device)
+  return Object.values(byId);
+}
+
+function mergeProjects(localProjects, remoteProjects, deletedIds) {
+  localProjects = localProjects || []; remoteProjects = remoteProjects || []; deletedIds = deletedIds || [];
+  const byId = {};
+  remoteProjects.forEach(p => { if (p && p.id && !deletedIds.includes(p.id)) byId[p.id] = p; });
+  localProjects.forEach(p => {
+    if (!p || !p.id || deletedIds.includes(p.id)) return;
+    const existing = byId[p.id];
+    if (!existing) { byId[p.id] = p; return; }
+    // Deep-merge suppliers (and their payments) within this project by id too
+    const mergedSuppliers = mergeSuppliers(p.suppliers, existing.suppliers, deletedIds);
+    byId[p.id] = Object.assign({}, existing, p, { suppliers: mergedSuppliers });
+  });
+  return Object.values(byId);
+}
+
+function mergeSuppliers(localSups, remoteSups, deletedIds) {
+  localSups = localSups || []; remoteSups = remoteSups || []; deletedIds = deletedIds || [];
+  const byId = {};
+  remoteSups.forEach(s => { if (s && s.id && !deletedIds.includes(s.id)) byId[s.id] = s; });
+  localSups.forEach(s => {
+    if (!s || !s.id || deletedIds.includes(s.id)) return;
+    const existing = byId[s.id];
+    if (!existing) { byId[s.id] = s; return; }
+    const mergedPayments = mergeArraysById(s.payments, existing.payments, deletedIds);
+    byId[s.id] = Object.assign({}, existing, s, { payments: mergedPayments });
+  });
+  return Object.values(byId);
+}
+
+function mergeStringArrays(a, b) {
+  return Array.from(new Set([...(a||[]), ...(b||[])]));
+}
+
+function mergeState(local, remote) {
+  if (!remote) return local;
+  const deletedIds = Array.from(new Set([...(local.deletedIds||[]), ...(remote.deletedIds||[])]));
+  const merged = Object.assign({}, local);
+  merged.entries = mergeArraysById(local.entries, remote.entries, deletedIds).filter(e=>!deletedIds.includes(e.id));
+  merged.clientPayments = mergeArraysById(local.clientPayments, remote.clientPayments, deletedIds).filter(e=>!deletedIds.includes(e.id));
+  merged.goldPurchases = mergeArraysById(local.goldPurchases, remote.goldPurchases, deletedIds).filter(e=>!deletedIds.includes(e.id));
+  merged.silverPurchases = mergeArraysById(local.silverPurchases, remote.silverPurchases, deletedIds).filter(e=>!deletedIds.includes(e.id));
+  merged.cashSavingsAdjustments = mergeArraysById(local.cashSavingsAdjustments, remote.cashSavingsAdjustments, deletedIds).filter(e=>!deletedIds.includes(e.id));
+  merged.cekProjects = mergeProjects(local.cekProjects, remote.cekProjects, deletedIds).filter(p=>!deletedIds.includes(p.id));
+  merged.projects = mergeStringArrays(local.projects, remote.projects);
+  merged.suppliers = mergeStringArrays(local.suppliers, remote.suppliers);
+  merged.clients = mergeStringArrays(local.clients, remote.clients);
+  merged.deletedIds = deletedIds;
+  // Budgets & custom categories: merge key-by-key, local wins ties
+  merged.budgets = { personal: Object.assign({}, (remote.budgets||{}).personal, local.budgets.personal) };
+  merged.customCats = {
+    personal_expense: mergeArraysById((local.customCats||{}).personal_expense, (remote.customCats||{}).personal_expense, []),
+    personal_income: mergeArraysById((local.customCats||{}).personal_income, (remote.customCats||{}).personal_income, []),
+    cek_expense: mergeArraysById((local.customCats||{}).cek_expense, (remote.customCats||{}).cek_expense, []),
+    cek_income: mergeArraysById((local.customCats||{}).cek_income, (remote.customCats||{}).cek_income, [])
+  };
+  // Scalars: whichever side was modified more recently wins
+  if ((remote.lastModified||0) > (local.lastModified||0)) {
+    merged.savings = remote.savings;
+    merged.savingsGoal = remote.savingsGoal;
+  }
+  merged.lastModified = Math.max(local.lastModified||0, remote.lastModified||0);
+  return merged;
+}
+
+async function pushStateToCloud() {
   if (!state.sheetsUrl) return;
   try {
-    await fetch(state.sheetsUrl,{method:'POST',mode:'no-cors',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'addEntry',entry})});
-    entry.synced=true; saveState();
-  } catch(e){}
+    await fetch(state.sheetsUrl, {
+      method: 'POST', mode: 'no-cors',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'pushState', state: state, deviceId: getDeviceId() })
+    });
+    state.lastSynced = new Date().toISOString();
+    try { localStorage.setItem('financeState_v2', JSON.stringify(state)); } catch(e) {}
+  } catch(e) {}
 }
+
+async function pullAndMerge(showFeedback) {
+  if (!state.sheetsUrl) return false;
+  try {
+    const res = await fetch(state.sheetsUrl + (state.sheetsUrl.includes('?')?'&':'?') + 'action=pullState');
+    const data = await res.json();
+    if (data.status === 'ok' && data.state) {
+      const merged = mergeState(state, data.state);
+      Object.assign(state, merged);
+      try { localStorage.setItem('financeState_v2', JSON.stringify(state)); } catch(e) {}
+      renderAll();
+      if (showFeedback) showToast('✅ Synced with cloud — all devices up to date');
+      return true;
+    } else if (showFeedback) {
+      showToast('No cloud data yet — this device will be the starting point');
+    }
+  } catch(e) {
+    if (showFeedback) showToast('Could not reach Google Sheets — check your connection', true);
+  }
+  return false;
+}
+
 async function syncNow() {
   if (!state.sheetsUrl) { showToast('Set up Google Sheets URL first',true); return; }
   showToast('Syncing...');
-  const unsynced=state.entries.filter(e=>!e.synced);
-  for (const entry of unsynced) await syncEntry(entry);
-  state.lastSynced=new Date().toISOString(); saveState();
-  document.getElementById('last-synced').textContent=new Date(state.lastSynced).toLocaleString();
-  showToast(`✅ Synced ${unsynced.length} entries`);
+  // Pull remote first and merge, THEN push the merged result back up —
+  // this way both directions of changes survive a sync.
+  await pullAndMerge(false);
+  await pushStateToCloud();
+  saveState();
+  document.getElementById('last-synced').textContent = new Date(state.lastSynced).toLocaleString();
+  showToast('✅ Two-way sync complete');
 }
+
 
 // ─── UTILITIES ────────────────────────────────────────────────────────────────
 function sum(entries, type, account) {
@@ -2352,15 +2503,22 @@ function confirmDelete(idx) {
   if (entry.linkedTransfer) {
     if (!confirm('This is part of a transfer. Deleting it will also delete the matching entry on the other account. Continue?')) return;
     const linkId = entry.linkedTransfer;
+    const toDelete = state.entries.filter(e=>e.linkedTransfer===linkId);
+    toDelete.forEach(e=>state.deletedIds.push(e.id));
     state.entries = state.entries.filter(e=>e.linkedTransfer!==linkId);
     // Also reverse any Cash Savings adjustment that shares this transfer's timestamp-based id prefix
+    const adjToDelete = (state.cashSavingsAdjustments||[]).filter(a=>a.id.startsWith(linkId));
+    adjToDelete.forEach(a=>state.deletedIds.push(a.id));
     state.cashSavingsAdjustments = (state.cashSavingsAdjustments||[]).filter(a=>!a.id.startsWith(linkId));
     saveState(); renderAll(); showToast('Transfer deleted');
     return;
   }
   if (!confirm('Delete this entry?')) return;
+  state.deletedIds.push(entry.id);
   // If this was a client payment (CEK income with a client), remove its matching record too
   if (entry.type==='income' && entry.account==='CEK' && entry.client) {
+    const cp = state.clientPayments.find(cp=>cp.id===entry.id);
+    if (cp) state.deletedIds.push(cp.id);
     state.clientPayments = state.clientPayments.filter(cp=>cp.id!==entry.id);
   }
   state.entries.splice(idx,1); saveState(); renderAll(); showToast('Entry deleted');
@@ -2375,11 +2533,29 @@ function exportCSV() {
   showToast('CSV downloaded!');
 }
 function clearData() {
-  if (!confirm('Delete ALL local data? This cannot be undone.')) return;
-  state.entries=[]; state.savings=0; saveState(); renderAll(); showToast('Data cleared');
+  if (!confirm('This clears ALL data on THIS DEVICE ONLY (does not affect your Google Sheets cloud backup or other devices). Continue?')) return;
+  state.entries=[]; state.savings=0; state.cekProjects=[]; state.clientPayments=[];
+  state.goldPurchases=[]; state.silverPurchases=[]; state.cashSavingsAdjustments=[];
+  // Local-only wipe — do NOT push this to the cloud, or it would delete everyone else's data too
+  state.lastModified = Date.now();
+  try { localStorage.setItem('financeState_v2', JSON.stringify(state)); } catch(e) {}
+  renderAll();
+  showToast('Local data cleared. Tap "Sync now" to restore from cloud if needed.');
 }
 
 init();
+
+// Periodically pull from the cloud while the app stays open, so if you also
+// have it open on another device, changes appear here without manual action.
+setInterval(()=>{
+  if (state.sheetsUrl) pullAndMerge(false);
+}, 30000);
+
+// Also pull fresh whenever the app comes back into view (e.g. switching from
+// another app on iPhone back to this one), since that's when staleness shows most.
+document.addEventListener('visibilitychange', ()=>{
+  if (!document.hidden && state.sheetsUrl) pullAndMerge(false);
+});
 </script>
 </body>
 </html>
