@@ -426,6 +426,8 @@
         <button class="form-tab" id="bud-cek" onclick="setBudgetView('cek')" style="flex:1">🏗️ CEK Projects</button>
       </div>
       <div id="bud-personal-view">
+        <div class="grid2" id="budget-summary"></div>
+        <div class="card" style="padding:12px 16px;margin-bottom:12px" id="budget-bars-header"></div>
         <div class="card" id="budget-bars"></div>
         <div class="sec-header"><span class="sec-title">Edit monthly budgets</span></div>
         <div class="card" id="budget-edit"></div>
@@ -1166,6 +1168,24 @@ function renderPersonalBudget() {
   const budgets = state.budgets.personal;
   const allCats = [...new Set([...Object.keys(budgets),...Object.keys(catTotals)])];
   allCats.sort((a,b)=>(catTotals[b]||0)-(catTotals[a]||0));
+
+  // Summary: total budget set vs total actually spent this month
+  const totalBudget = Object.values(budgets).reduce((s,v)=>s+v,0);
+  const totalSpent = Object.values(catTotals).reduce((s,v)=>s+v,0);
+  const remaining = totalBudget - totalSpent;
+  document.getElementById('budget-summary').innerHTML = `
+    <div class="mini-card"><div class="mini-label">🏦 Total budget</div><div class="mini-value" style="color:var(--yellow);font-size:20px">${fmt(totalBudget)}</div></div>
+    <div class="mini-card"><div class="mini-label">💸 Total spent</div><div class="mini-value ${totalSpent>totalBudget?'red':'green'}" style="font-size:20px">${fmt(totalSpent)}</div></div>
+  `;
+  const overallPct = totalBudget>0 ? Math.min(totalSpent/totalBudget*100,100) : 0;
+  const overallCls = overallPct>=100?'over':overallPct>=80?'warn':'ok';
+  document.getElementById('budget-bars-header').innerHTML = `
+    <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--text2);margin-bottom:6px">
+      <span>${remaining>=0?fmt(remaining)+' remaining':'Over by '+fmt(Math.abs(remaining))}</span><span>${Math.round(overallPct)}%</span>
+    </div>
+    <div class="prog-track" style="height:8px"><div class="prog-fill ${overallCls}" style="width:${overallPct}%"></div></div>
+  `;
+
   document.getElementById('budget-bars').innerHTML = allCats.filter(c=>catTotals[c]||budgets[c]).map(cat=>{
     const spent=catTotals[cat]||0, bud=budgets[cat]||0;
     const pct=bud>0?Math.min(spent/bud*100,100):(spent>0?100:0);
