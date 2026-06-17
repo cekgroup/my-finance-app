@@ -56,7 +56,8 @@
   .sec-link{font-size:12px;color:var(--accent);cursor:pointer}
 
   /* TRANSACTION LIST */
-  .txn-item{display:flex;align-items:center;gap:12px;padding:12px 0;border-bottom:1px solid var(--border)}
+  .txn-item{display:flex;align-items:center;gap:12px;padding:12px 0;border-bottom:1px solid var(--border);cursor:pointer;transition:opacity .1s}
+  .txn-item:active{opacity:0.6}
   .txn-item:last-child{border-bottom:none}
   .txn-icon{width:40px;height:40px;border-radius:12px;display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0}
   .txn-info{flex:1;min-width:0}
@@ -208,6 +209,19 @@
   .big-stat{text-align:center;padding:16px 0 8px}
   .big-stat-val{font-size:32px;font-weight:700;letter-spacing:-1px}
   .big-stat-label{font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:.06em;margin-top:4px}
+  /* RESERVE CARDS (savings hub) */
+  .reserve-card{background:var(--card);border-radius:var(--radius);padding:16px 14px;border:1px solid var(--border);cursor:pointer;text-align:center;transition:border-color .15s}
+  .reserve-card:active{border-color:var(--accent)}
+  .reserve-icon{font-size:26px;margin-bottom:6px}
+  .reserve-label{font-size:11px;color:var(--text2);text-transform:uppercase;letter-spacing:.05em;margin-bottom:5px}
+  .reserve-val{font-size:18px;font-weight:700}
+  /* METAL PURCHASE ITEM */
+  .metal-item{display:flex;justify-content:space-between;align-items:center;padding:12px 0;border-bottom:1px solid var(--border)}
+  .metal-item:last-child{border-bottom:none}
+  .metal-weight{font-size:14px;font-weight:600}
+  .metal-note{font-size:11px;color:var(--text3);margin-top:2px}
+  .metal-date{font-size:11px;color:var(--text2);margin-top:2px}
+  .metal-paid{font-size:14px;font-weight:700;color:var(--red)}
   ::-webkit-scrollbar{width:0}
 </style>
 </head>
@@ -217,7 +231,10 @@
   <!-- TOP BAR -->
   <div class="topbar">
     <div class="topbar-title">My <span>Finance</span></div>
-    <div class="topbar-month" id="monthLabel" onclick="openMonthPicker()">This Month ▾</div>
+    <div style="display:flex;gap:8px;align-items:center">
+      <div class="topbar-month" id="monthLabel" onclick="openMonthPicker()">This Month ▾</div>
+      <button onclick="showPage('settings')" style="background:var(--bg3);border:1px solid var(--border);border-radius:50%;width:30px;height:30px;font-size:14px;cursor:pointer;color:var(--text2)">⚙️</button>
+    </div>
   </div>
 
   <!-- PAGES -->
@@ -266,18 +283,34 @@
 
       <!-- TRANSFER FORM (shown only when transfer tab active) -->
       <div id="transfer-form" style="display:none">
+        <div class="form-group">
+          <label class="form-label">From</label>
+          <select class="form-input" id="t-from" onchange="onTransferAccountChange()">
+            <option value="CEK">🏗️ CEK Business</option>
+            <option value="Personal">👤 Personal</option>
+            <option value="CashSavings">💵 Cash Savings</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">To</label>
+          <select class="form-input" id="t-to" onchange="onTransferAccountChange()">
+            <option value="Personal">👤 Personal</option>
+            <option value="CEK">🏗️ CEK Business</option>
+            <option value="CashSavings">💵 Cash Savings</option>
+          </select>
+        </div>
         <div class="transfer-visual">
-          <div class="transfer-box from">
+          <div class="transfer-box from" id="t-box-from">
             <div class="transfer-box-label">From</div>
-            <div class="transfer-box-name">🏗️ CEK Business</div>
+            <div class="transfer-box-name" id="t-box-from-name">🏗️ CEK Business</div>
           </div>
           <div class="transfer-arrow">→</div>
-          <div class="transfer-box to">
+          <div class="transfer-box to" id="t-box-to">
             <div class="transfer-box-label">To</div>
-            <div class="transfer-box-name">👤 Personal</div>
+            <div class="transfer-box-name" id="t-box-to-name">👤 Personal</div>
           </div>
         </div>
-        <p style="font-size:12px;color:var(--text3);text-align:center;margin-bottom:16px">Money moves from CEK into your personal pocket. It won't inflate income or expense totals.</p>
+        <p style="font-size:12px;color:var(--text3);text-align:center;margin-bottom:16px" id="t-explainer">Money moves from CEK into your personal pocket — recorded as Personal income under "Transfer from CEK".</p>
         <div class="form-group">
           <label class="form-label">Amount ($)</label>
           <input type="number" inputmode="decimal" class="form-input amount-input" id="t-amount" placeholder="0.00">
@@ -315,18 +348,34 @@
         <input type="number" inputmode="decimal" class="form-input amount-input" id="f-amount" placeholder="0.00">
       </div>
 
-      <!-- CEK-specific fields (project + supplier) -->
+      <!-- CEK-specific fields: differ for expense (project+supplier) vs income (client+project) -->
       <div class="cek-fields" id="cek-fields" style="display:none">
         <div class="cek-badge">CEK Business</div>
-        <div class="form-group" style="margin-bottom:10px">
-          <label class="form-label">Project name</label>
-          <input type="text" class="form-input" id="f-project" placeholder="e.g. Foyer Ebrine, Atelier 33..." list="projects-list">
-          <datalist id="projects-list"></datalist>
+        <!-- Expense mode: project + supplier -->
+        <div id="cek-expense-fields">
+          <div class="form-group" style="margin-bottom:10px">
+            <label class="form-label">Project name</label>
+            <input type="text" class="form-input" id="f-project" placeholder="e.g. Foyer Ebrine, Atelier 33..." list="projects-list">
+            <datalist id="projects-list"></datalist>
+          </div>
+          <div class="form-group" style="margin-bottom:0">
+            <label class="form-label">Supplier / Worker</label>
+            <input type="text" class="form-input" id="f-supplier" placeholder="e.g. Rami Hassani, Grg Slim..." list="suppliers-list">
+            <datalist id="suppliers-list"></datalist>
+          </div>
         </div>
-        <div class="form-group" style="margin-bottom:0">
-          <label class="form-label">Supplier / Worker</label>
-          <input type="text" class="form-input" id="f-supplier" placeholder="e.g. Rami Hassani, Grg Slim..." list="suppliers-list">
-          <datalist id="suppliers-list"></datalist>
+        <!-- Income mode: client + project -->
+        <div id="cek-income-fields" style="display:none">
+          <div class="form-group" style="margin-bottom:10px">
+            <label class="form-label">Client name</label>
+            <input type="text" class="form-input" id="f-client" placeholder="e.g. Tony Nahed" list="clients-list">
+            <datalist id="clients-list"></datalist>
+          </div>
+          <div class="form-group" style="margin-bottom:0">
+            <label class="form-label">Project name</label>
+            <input type="text" class="form-input" id="f-inc-project" placeholder="e.g. Foyer Ebrine, Atelier 33..." list="projects-list-2">
+            <datalist id="projects-list-2"></datalist>
+          </div>
         </div>
       </div>
 
@@ -405,12 +454,37 @@
       <div id="supplier-detail-content"></div>
     </div>
 
-    <!-- SAVINGS -->
+    <!-- SAVINGS HUB -->
     <div class="page" id="page-savings">
-      <div class="sec-header" style="margin-top:4px"><span class="sec-title">Savings tracker</span></div>
+      <div class="sec-header" style="margin-top:4px"><span class="sec-title">Savings & reserves</span></div>
+      <div class="grid2">
+        <div class="reserve-card" onclick="showPage('savings-cash')">
+          <div class="reserve-icon">💵</div>
+          <div class="reserve-label">Cash savings</div>
+          <div class="reserve-val green" id="hub-cash">$0</div>
+        </div>
+        <div class="reserve-card" onclick="showPage('savings-gold')">
+          <div class="reserve-icon">🥇</div>
+          <div class="reserve-label">Gold reserve</div>
+          <div class="reserve-val" style="color:#ffd166" id="hub-gold">0g</div>
+        </div>
+      </div>
+      <div class="grid2">
+        <div class="reserve-card" onclick="showPage('savings-silver')">
+          <div class="reserve-icon">🥈</div>
+          <div class="reserve-label">Silver reserve</div>
+          <div class="reserve-val" style="color:#c0c0c8" id="hub-silver">0g</div>
+        </div>
+        <div class="reserve-card" style="opacity:0.4;cursor:default">
+          <div class="reserve-icon">📊</div>
+          <div class="reserve-label">Total net worth</div>
+          <div class="reserve-val purple" id="hub-total">$0</div>
+        </div>
+      </div>
+      <div class="sec-header"><span class="sec-title">Savings goal</span></div>
       <div class="card" style="text-align:center">
-        <div class="card-label">Current savings</div>
-        <div class="mini-value green" id="s-current" style="font-size:36px;margin-bottom:6px">$0</div>
+        <div class="card-label">Total savings (cash + gold + silver value)</div>
+        <div class="mini-value green" id="s-current" style="font-size:32px;margin-bottom:6px">$0</div>
         <div class="savings-ring">
           <svg viewBox="0 0 100 100">
             <circle cx="50" cy="50" r="42" fill="none" stroke="rgba(255,255,255,0.08)" stroke-width="8"/>
@@ -426,19 +500,57 @@
         <div class="mini-value purple" id="s-goal" style="font-size:22px">$0</div>
       </div>
       <div class="card">
-        <div class="card-label" style="margin-bottom:10px">Add to savings</div>
-        <div class="goal-input-row">
-          <input type="number" inputmode="decimal" class="form-input" id="s-add" placeholder="Amount">
-          <button class="goal-btn" onclick="addToSavings()">Add</button>
-        </div>
-      </div>
-      <div class="card">
         <div class="card-label" style="margin-bottom:10px">Set savings goal</div>
         <div class="goal-input-row">
           <input type="number" inputmode="decimal" class="form-input" id="s-goal-input" placeholder="e.g. 10000">
           <button class="goal-btn" onclick="setGoal()">Set</button>
         </div>
       </div>
+    </div>
+
+    <!-- CASH SAVINGS DETAIL -->
+    <div class="page" id="page-savings-cash">
+      <div class="sec-header" style="margin-top:4px">
+        <span class="sec-link" onclick="showPage('savings')">← Savings</span>
+      </div>
+      <div class="card" style="text-align:center">
+        <div class="card-label">💵 Total cash savings</div>
+        <div class="mini-value green" id="cash-total" style="font-size:34px">$0</div>
+        <div style="font-size:11px;color:var(--text3);margin-top:6px">Auto-filled when you log an expense under "cash savings" category</div>
+      </div>
+      <button class="submit-btn" style="margin-bottom:14px" onclick="showPage('add');setFormType('transfer');document.getElementById('t-from').value='CashSavings';onTransferAccountChange()">🔄 Transfer from cash savings</button>
+      <div class="sec-header"><span class="sec-title">Monthly contributions</span></div>
+      <div class="card" id="cash-monthly-list"></div>
+      <div class="sec-header"><span class="sec-title">Transfer history</span></div>
+      <div class="card" id="cash-transfer-list"></div>
+    </div>
+
+    <!-- GOLD RESERVE -->
+    <div class="page" id="page-savings-gold">
+      <div class="sec-header" style="margin-top:4px">
+        <span class="sec-link" onclick="showPage('savings')">← Savings</span>
+      </div>
+      <div class="grid2">
+        <div class="mini-card"><div class="mini-label">🥇 Total weight</div><div class="mini-value" style="color:#ffd166;font-size:22px" id="gold-total-weight">0g</div></div>
+        <div class="mini-card"><div class="mini-label">💰 Total paid</div><div class="mini-value red" style="font-size:22px" id="gold-total-paid">$0</div></div>
+      </div>
+      <button class="submit-btn" style="margin-bottom:14px" onclick="openMetalModal('gold')">+ Add gold purchase</button>
+      <div class="sec-header"><span class="sec-title">Purchase history</span></div>
+      <div class="card" id="gold-list"></div>
+    </div>
+
+    <!-- SILVER RESERVE -->
+    <div class="page" id="page-savings-silver">
+      <div class="sec-header" style="margin-top:4px">
+        <span class="sec-link" onclick="showPage('savings')">← Savings</span>
+      </div>
+      <div class="grid2">
+        <div class="mini-card"><div class="mini-label">🥈 Total weight</div><div class="mini-value" style="color:#c0c0c8;font-size:22px" id="silver-total-weight">0g</div></div>
+        <div class="mini-card"><div class="mini-label">💰 Total paid</div><div class="mini-value red" style="font-size:22px" id="silver-total-paid">$0</div></div>
+      </div>
+      <button class="submit-btn" style="margin-bottom:14px" onclick="openMetalModal('silver')">+ Add silver purchase</button>
+      <div class="sec-header"><span class="sec-title">Purchase history</span></div>
+      <div class="card" id="silver-list"></div>
     </div>
 
     <!-- SETTINGS -->
@@ -469,6 +581,17 @@
           <span class="setting-val" id="sync-status">⚪ Not configured</span>
         </div>
         <button class="submit-btn" style="margin-top:8px" onclick="syncNow()">🔄 Sync all data now</button>
+      </div>
+      <div class="sec-header"><span class="sec-title">CEK people</span></div>
+      <div class="card">
+        <div class="setting-row" style="cursor:pointer" onclick="showPage('clients')">
+          <span class="setting-label">👥 Clients — monthly payments</span>
+          <span class="setting-val">Open →</span>
+        </div>
+        <div class="setting-row" style="cursor:pointer" onclick="showPage('subcontractors')">
+          <span class="setting-label">👷 CEK payments — by supplier/category</span>
+          <span class="setting-val">Open →</span>
+        </div>
       </div>
       <div class="sec-header"><span class="sec-title">Manage categories</span></div>
       <div class="card">
@@ -504,7 +627,34 @@
       <div id="manage-cats-content"></div>
     </div>
 
+    <!-- CLIENTS / PAYMENTS RECEIVED -->
+    <div class="page" id="page-clients">
+      <div class="sec-header" style="margin-top:4px">
+        <span class="sec-title">Client payments</span>
+        <span class="sec-link" onclick="showPage('settings')">← Back</span>
+      </div>
+      <div style="display:flex;gap:8px;margin-bottom:12px">
+        <button class="form-tab active" id="client-view-byproject" onclick="setClientView('byproject')" style="flex:1">By project</button>
+        <button class="form-tab" id="client-view-bymonth" onclick="setClientView('bymonth')" style="flex:1">By month</button>
+      </div>
+      <div id="clients-content"></div>
+    </div>
+
+    <!-- SUBCONTRACTORS / PAYMENTS MADE -->
+    <div class="page" id="page-subcontractors">
+      <div class="sec-header" style="margin-top:4px">
+        <span class="sec-title">CEK payments made</span>
+        <span class="sec-link" onclick="showPage('settings')">← Back</span>
+      </div>
+      <div style="display:flex;gap:8px;margin-bottom:12px">
+        <button class="form-tab active" id="sub-view-bysupplier" onclick="setSubView('bysupplier')" style="flex:1">By supplier</button>
+        <button class="form-tab" id="sub-view-bymonth" onclick="setSubView('bymonth')" style="flex:1">By month</button>
+      </div>
+      <div id="subcontractors-content"></div>
+    </div>
+
   </div><!-- /pages -->
+
 
   <!-- BOTTOM NAV -->
   <nav class="nav">
@@ -512,7 +662,7 @@
     <button class="nav-btn" id="nav-history" onclick="showPage('history')"><span class="nav-icon">📋</span>History</button>
     <button class="nav-add" onclick="showPage('add')" aria-label="Add entry">+</button>
     <button class="nav-btn" id="nav-budget" onclick="showPage('budget')"><span class="nav-icon">🎯</span>Budget</button>
-    <button class="nav-btn" id="nav-settings" onclick="showPage('settings')"><span class="nav-icon">⚙️</span>Settings</button>
+    <button class="nav-btn" id="nav-savings" onclick="showPage('savings')"><span class="nav-icon">💎</span>Savings</button>
   </nav>
 </div>
 
@@ -623,6 +773,32 @@
   </div>
 </div>
 
+<!-- METAL (GOLD/SILVER) PURCHASE MODAL -->
+<div class="modal-overlay" id="metal-modal" onclick="closeModal('metal-modal',event)">
+  <div class="modal-sheet">
+    <div class="modal-handle"></div>
+    <div class="modal-title" id="metal-modal-title">Add gold purchase</div>
+    <div class="form-group">
+      <label class="form-label">Weight (grams)</label>
+      <input type="number" inputmode="decimal" class="form-input amount-input" id="metal-weight" placeholder="0.00">
+    </div>
+    <div class="form-group">
+      <label class="form-label">Amount paid ($)</label>
+      <input type="number" inputmode="decimal" class="form-input" id="metal-paid" placeholder="0">
+    </div>
+    <div class="form-group">
+      <label class="form-label">Date purchased</label>
+      <input type="date" class="form-input" id="metal-date">
+    </div>
+    <div class="form-group">
+      <label class="form-label">Note (optional)</label>
+      <input type="text" class="form-input" id="metal-note" placeholder="e.g. 1 ounce coin, jewelry...">
+    </div>
+    <button class="submit-btn" onclick="saveMetalPurchase()">Save purchase</button>
+    <button class="btn-secondary" onclick="closeModal('metal-modal')">Cancel</button>
+  </div>
+</div>
+
 <!-- TOAST -->
 <div class="toast" id="toast"></div>
 
@@ -637,11 +813,11 @@ const DEFAULT_PERSONAL_EXP_CATS = [
   {n:'celine',i:'👩'},{n:'baby',i:'👶'},{n:'Yasmine',i:'🌸'},
   {n:'coffeshop',i:'☕'},{n:'having fun',i:'🎢'},{n:'Padel',i:'🎾'},
   {n:'travel',i:'✈️'},{n:'car maintenance',i:'🚗'},{n:'insurances',i:'🛡️'},
-  {n:'savings',i:'🏦'},{n:'unknown',i:'❓'}
+  {n:'cash savings',i:'💰'},{n:'unknown',i:'❓'}
 ];
 const DEFAULT_PERSONAL_INC_CATS = [
   {n:'salary',i:'💼'},{n:'freelance',i:'💻'},{n:'bonus',i:'🎯'},
-  {n:'savings withdrawal',i:'🏦'},{n:'gift received',i:'🎁'},{n:'other income',i:'💰'}
+  {n:'transfer from CEK',i:'🔄'},{n:'gift received',i:'🎁'},{n:'other income',i:'💰'}
 ];
 const DEFAULT_CEK_EXP_CATS = [
   {n:'materials',i:'🧱'},{n:'labor',i:'👷'},{n:'transport',i:'🚛'},
@@ -649,11 +825,11 @@ const DEFAULT_CEK_EXP_CATS = [
   {n:'cleaning',i:'🧹'},{n:'subcontractor',i:'🤝'},{n:'permits',i:'📋'},
   {n:'design fees',i:'📐'},{n:'salaries',i:'💰'},{n:'maintenance',i:'🔧'},
   {n:'tiles',i:'🪟'},{n:'aluminum',i:'🪨'},{n:'plumbing',i:'🔩'},
-  {n:'project expense',i:'📦'},{n:'other CEK',i:'❓'}
+  {n:'project expense',i:'📦'},{n:'transfer to personal',i:'🔄'},{n:'other CEK',i:'❓'}
 ];
 const DEFAULT_CEK_INC_CATS = [
   {n:'project payment',i:'🏗️'},{n:'advance payment',i:'💵'},{n:'final payment',i:'✅'},
-  {n:'consultation',i:'💼'},{n:'material sale',i:'📦'},{n:'other CEK income',i:'💰'}
+  {n:'consultation',i:'💼'},{n:'material sale',i:'📦'},{n:'transfer from personal',i:'🔄'},{n:'other CEK income',i:'💰'}
 ];
 
 // ─── STATE ────────────────────────────────────────────────────────────────────
@@ -662,7 +838,12 @@ let state = {
   customCats: { personal_expense:[], personal_income:[], cek_expense:[], cek_income:[] },
   projects: [],    // autocomplete list (strings)
   suppliers: [],   // autocomplete list (strings)
+  clients: [],     // autocomplete list (strings) — CEK clients
   cekProjects: [], // full project objects with suppliers & payments
+  clientPayments: [], // {id, client, project, amount, date, description}
+  goldPurchases: [],  // {id, weight, paid, date, note}
+  silverPurchases: [],// {id, weight, paid, date, note}
+  cashSavingsAdjustments: [], // {id, amount, date, note} — positive=deposit via transfer, negative=withdrawal via transfer
   budgets: {
     personal: { 'eating out':600,'supermarket':600,'invitation':200,'gifts':200,'clothes':150,'diesel':250,'gym':300,'healthcare':200,'personal care':100,'families':200,'home expenses':200,'home repair':200,'mobile':75,'charity':50,'celine':800,'baby':300,'Yasmine':200,'coffeshop':100,'having fun':100,'Padel':100,'travel':500,'car maintenance':100,'insurances':458 }
   },
@@ -698,10 +879,16 @@ function loadState() {
     if (!state.customCats) state.customCats = {personal_expense:[],personal_income:[],cek_expense:[],cek_income:[]};
     if (!state.projects) state.projects = [];
     if (!state.suppliers) state.suppliers = [];
+    if (!state.clients) state.clients = [];
     if (!state.cekProjects) state.cekProjects = [];
+    if (!state.clientPayments) state.clientPayments = [];
+    if (!state.goldPurchases) state.goldPurchases = [];
+    if (!state.silverPurchases) state.silverPurchases = [];
+    if (!state.cashSavingsAdjustments) state.cashSavingsAdjustments = [];
     if (!state.budgets.personal) state.budgets.personal = state.budgets.personal || {};
     state.activeProjectId = state.activeProjectId || null;
     state.activeSupplierId = state.activeSupplierId || null;
+    state.transferDirection = state.transferDirection || 'cek2personal';
   } catch(e) {}
 }
 
@@ -721,8 +908,13 @@ function showPage(name) {
   if (name==='history') renderHistory();
   if (name==='budget') renderBudget();
   if (name==='savings') renderSavings();
+  if (name==='savings-cash') renderCashSavings();
+  if (name==='savings-gold') renderMetal('gold');
+  if (name==='savings-silver') renderMetal('silver');
   if (name==='settings') renderSettings();
   if (name==='manage-cats') renderManageCats();
+  if (name==='clients') renderClients();
+  if (name==='subcontractors') renderSubcontractors();
   if (name==='project') renderProjectDetail();
   if (name==='supplier') renderSupplierDetail();
   if (name==='add') {
@@ -787,10 +979,10 @@ function renderAll() { renderHome(); renderHistory(); renderBudget(); renderSavi
 
 function renderHome() {
   const me = getMonthEntries();
-  const real = me.filter(e=>e.type!=='transfer');
-  const pi = sum(real,'income','Personal'), pe = sum(real,'expense','Personal');
-  const ci = sum(real,'income','CEK'), ce = sum(real,'expense','CEK');
-  const transfers = me.filter(e=>e.type==='transfer').reduce((s,e)=>s+e.amount,0);
+  // Transfers are now REAL expense/income entries (correctly affect both account totals)
+  const pi = sum(me,'income','Personal'), pe = sum(me,'expense','Personal');
+  const ci = sum(me,'income','CEK'), ce = sum(me,'expense','CEK');
+  const transfers = me.filter(e=>e.linkedTransfer && e.type==='income').reduce((s,e)=>s+e.amount,0);
   set('h-pinc', fmt(pi), 'green');
   set('h-pexp', fmt(pe), 'red');
   set('h-pnet', fmt(pi-pe), (pi-pe)>=0?'purple':'red');
@@ -799,9 +991,9 @@ function renderHome() {
   set('h-cnet', fmt(ci-ce), ''); document.getElementById('h-cnet').style.color=(ci-ce)>=0?'var(--green)':'var(--red)';
   document.getElementById('h-transfers').textContent = fmt(transfers);
 
-  // Alerts — personal only
+  // Alerts — personal only (exclude transfer categories from budget tracking)
   const catTotals = {};
-  real.filter(e=>e.type==='expense'&&e.account==='Personal').forEach(e=>{ catTotals[e.category]=(catTotals[e.category]||0)+e.amount; });
+  me.filter(e=>e.type==='expense'&&e.account==='Personal'&&!e.linkedTransfer).forEach(e=>{ catTotals[e.category]=(catTotals[e.category]||0)+e.amount; });
   const alerts = Object.entries(state.budgets.personal)
     .map(([cat,bud])=>({cat,spent:catTotals[cat]||0,bud,pct:bud>0?(catTotals[cat]||0)/bud:0}))
     .filter(a=>a.pct>0.6).sort((a,b)=>b.pct-a.pct).slice(0,5);
@@ -817,22 +1009,25 @@ function renderHome() {
         </div>`;
       }).join('');
 
-  // Recent — all entry types including transfers
-  const recent = [...me].sort((a,b)=>new Date(b.date)-new Date(a.date)).slice(0,8);
+  // Recent — skip the "out" half of transfers to avoid double-listing, show only the "in" half
+  const recent = [...me].filter(e=>!(e.linkedTransfer && e.type==='expense')).sort((a,b)=>new Date(b.date)-new Date(a.date)).slice(0,8);
   document.getElementById('recent-list').innerHTML = recent.length===0
     ? '<div class="empty"><div class="empty-icon">📭</div><div class="empty-text">No entries yet.<br>Tap + to add your first one.</div></div>'
-    : recent.map(e=>txnHTML(e)).join('');
+    : recent.map(e=>`<div onclick="confirmDelete(${state.entries.indexOf(e)})">${txnHTML(e)}</div>`).join('');
 }
 
 function txnHTML(e) {
-  // Transfers get a special visual
-  if (e.type==='transfer') {
+  // Transfers (linkedTransfer set) get a special visual showing both sides
+  if (e.linkedTransfer) {
     const dateStr = e.date ? new Date(e.date+'T00:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric'}) : '';
     const proj = e.project ? ` · ${e.project}` : '';
+    const isIn = e.type==='income';
+    const otherAccount = e.category.includes('CEK') ? 'CEK' : e.category.includes('personal') ? 'Personal' : (e.account==='CEK'?'Personal':'CEK');
+    const arrow = isIn ? `${otherAccount} → ${e.account}` : `${e.account} → ${otherAccount}`;
     return `<div class="txn-item transfer">
       <div class="txn-icon" style="background:rgba(108,99,255,.18);font-size:20px">🔄</div>
       <div class="txn-info">
-        <div class="txn-cat" style="color:var(--accent)">CEK → Personal</div>
+        <div class="txn-cat" style="color:var(--accent)">${arrow}</div>
         <div class="txn-desc">${e.description||'Transfer'}${proj}</div>
         <div class="txn-meta">Transfer · ${dateStr}</div>
       </div>
@@ -843,7 +1038,7 @@ function txnHTML(e) {
   const bg = e.type==='income'?'rgba(0,212,170,.12)':'rgba(255,101,132,.1)';
   const dateStr = e.date ? new Date(e.date+'T00:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric'}) : '';
   const proj = e.project ? ` · ${e.project}` : '';
-  const supp = e.supplier ? ` · ${e.supplier}` : '';
+  const supp = e.supplier ? ` · ${e.supplier}` : (e.client ? ` · ${e.client}` : '');
   return `<div class="txn-item">
     <div class="txn-icon" style="background:${bg}">${icon}</div>
     <div class="txn-info">
@@ -858,9 +1053,11 @@ function txnHTML(e) {
 function renderHistory() {
   const acctFilter = document.getElementById('filter-account')?.value||'';
   const typeFilter = document.getElementById('filter-type')?.value||'';
-  let entries = [...state.entries].sort((a,b)=>new Date(b.date)-new Date(a.date));
-  if (acctFilter) entries = entries.filter(e=>e.account===acctFilter||e.type==='transfer');
-  if (typeFilter) entries = entries.filter(e=>e.type===typeFilter);
+  // Hide the "out" half of each transfer pair to avoid duplicate rows; keep the "in" half as the single visual
+  let entries = [...state.entries].filter(e=>!(e.linkedTransfer && e.type==='expense')).sort((a,b)=>new Date(b.date)-new Date(a.date));
+  if (acctFilter) entries = entries.filter(e=>e.account===acctFilter || (e.linkedTransfer && (e.category.includes(acctFilter)||e.account===acctFilter)));
+  if (typeFilter==='transfer') entries = entries.filter(e=>e.linkedTransfer);
+  else if (typeFilter) entries = entries.filter(e=>e.type===typeFilter && !e.linkedTransfer);
   document.getElementById('history-list').innerHTML = entries.length===0
     ? '<div class="empty"><div class="empty-icon">📋</div><div class="empty-text">No entries found.</div></div>'
     : entries.map(e=>`<div onclick="confirmDelete(${state.entries.indexOf(e)})">${txnHTML(e)}</div>`).join('');
@@ -908,6 +1105,30 @@ function renderPersonalBudget() {
 function updateBudget(key,cat,val) { state.budgets[key][cat]=parseFloat(val)||0; saveState(); showToast('Budget updated'); }
 
 // ─── CEK PROJECT TRACKER ──────────────────────────────────────────────────────
+// ─── PROJECT FINANCIAL MODEL ───────────────────────────────────────────────
+// Contract value: fixed number entered once — the total deal size.
+// Payments received: CEK income entries tagged to this project — tracked AGAINST the contract, not added to it.
+// Remaining to collect: Contract value − Payments received.
+// Paid out: ALL CEK expense entries tagged to this project (covers supplier payments + any direct project expense).
+// Profit: Contract value − Paid out (your real margin on the deal).
+function projectContractValue(p) { return p.contractValue||0; }
+function projectPaymentsReceived(p) {
+  return state.entries.filter(e=>e.type==='income'&&e.account==='CEK'&&e.project===p.name).reduce((s,e)=>s+e.amount,0);
+}
+function projectRemainingToCollect(p) {
+  return projectContractValue(p) - projectPaymentsReceived(p);
+}
+function projectTotalPaid(p) {
+  // All CEK expenses tagged to this project — includes supplier payments and any direct expense
+  return state.entries.filter(e=>e.type==='expense'&&e.account==='CEK'&&e.project===p.name).reduce((s,e)=>s+e.amount,0);
+}
+function projectTotalBudget(p) {
+  return (p.suppliers||[]).reduce((s,sup)=>s+(sup.budget||0),0);
+}
+function projectProfit(p) {
+  return projectContractValue(p) - projectTotalPaid(p);
+}
+
 function renderCEKProjects() {
   const el = document.getElementById('projects-list-view');
   if (!state.cekProjects||state.cekProjects.length===0) {
@@ -915,50 +1136,42 @@ function renderCEKProjects() {
     return;
   }
   el.innerHTML = state.cekProjects.map(p => {
+    const contract = projectContractValue(p);
+    const received = projectPaymentsReceived(p);
+    const remaining = projectRemainingToCollect(p);
     const totalPaid = projectTotalPaid(p);
-    const totalBudget = projectTotalBudget(p);
-    const income = projectTotalIncome(p);
-    const pct = totalBudget>0 ? Math.min(totalPaid/totalBudget*100,100) : 0;
-    const profit = income - totalBudget;
+    const profit = projectProfit(p);
+    const pct = contract>0 ? Math.min(totalPaid/contract*100,100) : 0;
     const statusCls = {'active':'status-active','completed':'status-completed','on-hold':'status-on-hold'}[p.status]||'status-active';
     const statusLabel = {'active':'🟢 Active','completed':'✅ Done','on-hold':'⏸ Hold'}[p.status]||'Active';
     const barColor = pct>=100?'var(--red)':pct>=80?'var(--yellow)':'var(--green)';
     return `<div class="proj-card" onclick="openProject('${p.id}')">
       <div class="proj-header">
         <div class="proj-name">🏗️ ${p.name}</div>
-        <span class="status-badge ${statusCls}">${statusLabel}</span>
+        <div style="display:flex;align-items:center;gap:6px;flex-shrink:0">
+          <span class="status-badge ${statusCls}">${statusLabel}</span>
+          <button onclick="event.stopPropagation();deleteProjectFromList('${p.id}')" style="border:none;background:rgba(255,101,132,.12);color:var(--red);border-radius:8px;width:26px;height:26px;font-size:13px;cursor:pointer;line-height:1">✕</button>
+        </div>
       </div>
       ${p.client?`<div class="proj-client">👤 ${p.client}</div>`:''}
       <div class="proj-amounts">
         <div class="proj-amt">
           <div class="proj-amt-label">Contract</div>
-          <div class="proj-amt-val" style="color:#5ba0ff">${fmt(income)}</div>
+          <div class="proj-amt-val" style="color:#5ba0ff">${fmt(contract)}</div>
         </div>
         <div class="proj-amt">
           <div class="proj-amt-label">Paid out</div>
           <div class="proj-amt-val" style="color:var(--red)">${fmt(totalPaid)}</div>
         </div>
         <div class="proj-amt">
-          <div class="proj-amt-label">Profit est.</div>
+          <div class="proj-amt-label">Profit</div>
           <div class="proj-amt-val" style="color:${profit>=0?'var(--green)':'var(--red)'}">${fmt(profit)}</div>
         </div>
       </div>
       <div class="proj-bar-track"><div class="proj-bar-fill" style="width:${pct}%;background:${barColor}"></div></div>
-      <div style="font-size:10px;color:var(--text3);margin-top:4px">${Math.round(pct)}% of budget spent · ${p.suppliers?p.suppliers.length:0} suppliers</div>
+      <div style="font-size:10px;color:var(--text3);margin-top:4px">${fmt(received)} collected · ${fmt(remaining>0?remaining:0)} still owed by client</div>
     </div>`;
   }).join('');
-}
-
-function projectTotalPaid(p) {
-  return (p.suppliers||[]).reduce((s,sup)=>(sup.payments||[]).reduce((ps,pay)=>ps+pay.amount,0)+s,0);
-}
-function projectTotalBudget(p) {
-  return (p.suppliers||[]).reduce((s,sup)=>s+(sup.budget||0),0);
-}
-function projectTotalIncome(p) {
-  // sum entries tagged to this project as CEK income
-  return state.entries.filter(e=>e.type==='income'&&e.account==='CEK'&&e.project===p.name).reduce((s,e)=>s+e.amount,0)
-    + (p.contractValue||0);
 }
 
 function openProject(id) {
@@ -971,16 +1184,17 @@ function openProject(id) {
 function renderProjectDetail() {
   const p = state.cekProjects.find(p=>p.id===state.activeProjectId);
   if (!p) return;
+  const contract = projectContractValue(p);
+  const received = projectPaymentsReceived(p);
+  const remaining = projectRemainingToCollect(p);
   const totalPaid = projectTotalPaid(p);
-  const totalBudget = projectTotalBudget(p);
-  const income = projectTotalIncome(p);
-  const remaining = totalBudget - totalPaid;
+  const profit = projectProfit(p);
+  const supplierBudget = projectTotalBudget(p);
   const statusCls = {'active':'status-active','completed':'status-completed','on-hold':'status-on-hold'}[p.status]||'status-active';
   const statusLabel = {'active':'🟢 Active','completed':'✅ Completed','on-hold':'⏸ On hold'}[p.status]||'Active';
-  const pct = totalBudget>0?Math.min(totalPaid/totalBudget*100,100):0;
-  const barColor = pct>=100?'var(--red)':pct>=80?'var(--yellow)':'var(--green)';
+  const collectPct = contract>0?Math.min(received/contract*100,100):0;
+  const spendPct = contract>0?Math.min(totalPaid/contract*100,100):0;
 
-  // Delete button
   document.getElementById('proj-delete-btn').onclick = ()=>deleteProject(p.id);
 
   let html = `
@@ -990,19 +1204,26 @@ function renderProjectDetail() {
       <span class="status-badge ${statusCls}" style="font-size:12px">${statusLabel}</span>
     </div>
     <div class="grid2" style="margin-bottom:12px">
-      <div class="mini-card"><div class="mini-label">💵 Contract value</div><div class="mini-value" style="color:#5ba0ff;font-size:18px">${fmt(income)}</div></div>
-      <div class="mini-card"><div class="mini-label">💸 Total paid out</div><div class="mini-value red" style="font-size:18px">${fmt(totalPaid)}</div></div>
+      <div class="mini-card"><div class="mini-label">💵 Contract value</div><div class="mini-value" style="color:#5ba0ff;font-size:18px">${fmt(contract)}</div></div>
+      <div class="mini-card"><div class="mini-label">✅ Received (income)</div><div class="mini-value green" style="font-size:18px">${fmt(received)}</div></div>
     </div>
     <div class="grid2" style="margin-bottom:12px">
-      <div class="mini-card"><div class="mini-label">🏦 Budget allocated</div><div class="mini-value" style="color:var(--yellow);font-size:18px">${fmt(totalBudget)}</div></div>
-      <div class="mini-card"><div class="mini-label">📈 Est. profit</div><div class="mini-value ${income-totalBudget>=0?'green':'red'}" style="font-size:18px">${fmt(income-totalBudget)}</div></div>
+      <div class="mini-card"><div class="mini-label">⏳ Remaining to collect</div><div class="mini-value" style="color:var(--yellow);font-size:18px">${fmt(remaining>0?remaining:0)}</div></div>
+      <div class="mini-card"><div class="mini-label">💸 Paid out (expenses)</div><div class="mini-value red" style="font-size:18px">${fmt(totalPaid)}</div></div>
+    </div>
+    <div class="card" style="text-align:center;margin-bottom:12px">
+      <div class="card-label">📈 Profit (Contract − Paid out)</div>
+      <div class="mini-value ${profit>=0?'green':'red'}" style="font-size:26px">${fmt(profit)}</div>
     </div>
     <div class="card" style="padding:12px 16px">
       <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--text2);margin-bottom:6px">
-        <span>Budget spent</span><span>${Math.round(pct)}%</span>
+        <span>Collected from client</span><span>${Math.round(collectPct)}%</span>
       </div>
-      <div class="prog-track" style="height:8px"><div class="prog-fill" style="width:${pct}%;background:${barColor}"></div></div>
-      <div style="font-size:11px;color:var(--text3);margin-top:6px">${fmt(totalPaid)} paid · ${fmt(remaining>0?remaining:0)} remaining</div>
+      <div class="prog-track" style="height:8px;margin-bottom:10px"><div class="prog-fill ok" style="width:${collectPct}%"></div></div>
+      <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--text2);margin-bottom:6px">
+        <span>Spent vs contract</span><span>${Math.round(spendPct)}%</span>
+      </div>
+      <div class="prog-track" style="height:8px"><div class="prog-fill ${spendPct>=100?'over':spendPct>=80?'warn':'ok'}" style="width:${spendPct}%"></div></div>
     </div>
     <div class="sec-header">
       <span class="sec-title">Suppliers & workers</span>
@@ -1033,9 +1254,28 @@ function renderProjectDetail() {
     html += '</div>';
   }
 
+  if (supplierBudget>0) {
+    html += `<div style="font-size:11px;color:var(--text3);margin:6px 0 0;padding:0 4px">Total supplier budgets allocated: ${fmt(supplierBudget)}</div>`;
+  }
+
   // Edit project controls
   html += `<div class="sec-header"><span class="sec-title">Edit project</span></div>
     <div class="card">
+      <div class="form-group">
+        <label class="form-label">Project name</label>
+        <div style="display:flex;gap:8px">
+          <input type="text" class="form-input" id="edit-proj-name" value="${p.name.replace(/"/g,'&quot;')}" style="flex:1">
+          <button onclick="updateProjectName('${p.id}')" style="padding:13px 16px;background:var(--accent);border:none;border-radius:var(--radius-sm);color:white;font-size:13px;font-weight:700;font-family:inherit;cursor:pointer;white-space:nowrap">Save</button>
+        </div>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Client name</label>
+        <div style="display:flex;gap:8px">
+          <input type="text" class="form-input" id="edit-proj-client" value="${(p.client||'').replace(/"/g,'&quot;')}" style="flex:1" list="edit-clients-list">
+          <datalist id="edit-clients-list">${state.clients.map(c=>`<option value="${c}">`).join('')}</datalist>
+          <button onclick="updateProjectClient('${p.id}')" style="padding:13px 16px;background:var(--accent);border:none;border-radius:var(--radius-sm);color:white;font-size:13px;font-weight:700;font-family:inherit;cursor:pointer;white-space:nowrap">Save</button>
+        </div>
+      </div>
       <div class="form-group"><label class="form-label">Status</label>
         <select class="form-input" id="edit-proj-status" onchange="updateProjectStatus('${p.id}',this.value)">
           <option value="active" ${p.status==='active'?'selected':''}>🟢 Active</option>
@@ -1053,6 +1293,39 @@ function renderProjectDetail() {
     </div>`;
 
   document.getElementById('project-detail-content').innerHTML = html;
+}
+
+function updateProjectName(id) {
+  const p = state.cekProjects.find(p=>p.id===id);
+  const newName = document.getElementById('edit-proj-name').value.trim();
+  if (!newName) { showToast('Project name cannot be empty',true); return; }
+  if (!p) return;
+  const oldName = p.name;
+  if (newName===oldName) return;
+  // Check for collision with another existing project
+  if (state.cekProjects.find(pr=>pr.id!==id && pr.name===newName)) {
+    showToast('A project with that name already exists',true); return;
+  }
+  p.name = newName;
+  // Re-tag every entry, client payment, and project list reference so history stays linked
+  state.entries.forEach(e=>{ if (e.project===oldName) e.project=newName; });
+  state.clientPayments.forEach(cp=>{ if (cp.project===oldName) cp.project=newName; });
+  const idx = state.projects.indexOf(oldName);
+  if (idx>-1) state.projects[idx]=newName; else state.projects.push(newName);
+  saveState();
+  renderProjectDetail();
+  showToast('✅ Project renamed');
+}
+
+function updateProjectClient(id) {
+  const p = state.cekProjects.find(p=>p.id===id);
+  const newClient = document.getElementById('edit-proj-client').value.trim();
+  if (!p) return;
+  p.client = newClient;
+  if (newClient && !state.clients.includes(newClient)) state.clients.push(newClient);
+  saveState();
+  renderProjectDetail();
+  showToast('✅ Client updated');
 }
 
 function openSupplier(projectId, supplierId) {
@@ -1130,6 +1403,12 @@ function openNewProjectModal() {
 function saveProject() {
   const name = document.getElementById('np-name').value.trim();
   if (!name) { showToast('Enter a project name',true); return; }
+  if (state.cekProjects.find(p=>p.name===name)) {
+    showToast('A project with that name already exists — opening it instead');
+    closeModal('newproject-modal');
+    openProject(state.cekProjects.find(p=>p.name===name).id);
+    return;
+  }
   const proj = {
     id: Date.now().toString(),
     name,
@@ -1159,12 +1438,37 @@ function updateProjectContract(id) {
   if (p) { p.contractValue=val; saveState(); renderProjectDetail(); showToast('Contract value updated'); }
 }
 
-function deleteProject(id) {
-  if (!confirm('Delete this project and all its supplier data?')) return;
-  state.cekProjects = state.cekProjects.filter(p=>p.id!==id);
+function deleteProjectCore(id) {
+  const p = state.cekProjects.find(p=>p.id===id);
+  if (!p) return false;
+  const linkedCount = state.entries.filter(e=>e.account==='CEK'&&e.project===p.name).length;
+  const msg = linkedCount>0
+    ? `Delete "${p.name}"? This will also permanently delete ${linkedCount} linked income/expense ${linkedCount===1?'entry':'entries'} and all supplier payment history for this project. This cannot be undone.`
+    : `Delete "${p.name}"? This cannot be undone.`;
+  if (!confirm(msg)) return false;
+  // Remove the project object
+  state.cekProjects = state.cekProjects.filter(pr=>pr.id!==id);
+  // Remove every entry tied to this project (income, expenses, supplier payments — all tagged with project name)
+  state.entries = state.entries.filter(e=>!(e.account==='CEK' && e.project===p.name));
+  // Remove client payment records tied to this project
+  state.clientPayments = state.clientPayments.filter(cp=>cp.project!==p.name);
   saveState();
+  return true;
+}
+
+function deleteProject(id) {
+  // Called from inside the project detail page — navigate back to the list after deleting
+  if (!deleteProjectCore(id)) return;
   showPage('budget'); setBudgetView('cek');
-  showToast('Project deleted');
+  showToast('Project and all linked data deleted');
+}
+
+function deleteProjectFromList(id) {
+  // Called directly from the project card in the list — stay on the list and just re-render it
+  if (!deleteProjectCore(id)) return;
+  renderCEKProjects();
+  renderHome();
+  showToast('Project and all linked data deleted');
 }
 
 function openNewSupplierModal(projectId) {
@@ -1199,11 +1503,22 @@ function saveSupplier() {
 }
 
 function deleteSupplier(projectId, supplierId) {
-  if (!confirm('Delete this supplier and all their payments?')) return;
   const p = state.cekProjects.find(p=>p.id===projectId);
-  if (p) { p.suppliers = p.suppliers.filter(s=>s.id!==supplierId); saveState(); }
+  if (!p) return;
+  const sup = (p.suppliers||[]).find(s=>s.id===supplierId);
+  if (!sup) return;
+  const paymentCount = (sup.payments||[]).length;
+  const msg = paymentCount>0
+    ? `Delete ${sup.name} and all ${paymentCount} of their payment ${paymentCount===1?'record':'records'}? This will also remove these amounts from the project's "Paid out" total. This cannot be undone.`
+    : `Delete ${sup.name}? This cannot be undone.`;
+  if (!confirm(msg)) return;
+  // Remove the linked expense entries this supplier's payments created
+  const paymentIds = (sup.payments||[]).map(pay=>'pay_'+pay.id);
+  state.entries = state.entries.filter(e=>!paymentIds.includes(e.id));
+  p.suppliers = p.suppliers.filter(s=>s.id!==supplierId);
+  saveState();
   renderProjectDetail(); showPage('project');
-  showToast('Supplier deleted');
+  showToast('Supplier and linked payments deleted');
 }
 
 function openPaymentModal(projectId, supplierId) {
@@ -1258,15 +1573,154 @@ function deletePayment(projectId, supplierId, payIdx) {
   if (!confirm('Delete this payment?')) return;
   const p = state.cekProjects.find(p=>p.id===projectId);
   const sup = p?(p.suppliers||[]).find(s=>s.id===supplierId):null;
-  if (sup) { sup.payments.splice(payIdx,1); saveState(); renderSupplierDetail(); showToast('Payment deleted'); }
+  if (!sup) return;
+  const pay = sup.payments[payIdx];
+  if (pay) {
+    // Remove the linked CEK expense entry this payment created
+    state.entries = state.entries.filter(e=>e.id!=='pay_'+pay.id);
+  }
+  sup.payments.splice(payIdx,1);
+  saveState();
+  renderSupplierDetail();
+  renderAll();
+  showToast('Payment deleted');
 }
 
+function getCashSavingsTotal() {
+  // Base: every expense entry logged under category "cash savings" (Personal account), all-time
+  const base = state.entries.filter(e=>e.type==='expense'&&e.account==='Personal'&&e.category==='cash savings').reduce((s,e)=>s+e.amount,0);
+  // Plus/minus: transfers in/out of Cash Savings done via the Transfer screen
+  const adjustments = (state.cashSavingsAdjustments||[]).reduce((s,a)=>s+a.amount,0);
+  return base + adjustments;
+}
+function getGoldTotalWeight() { return state.goldPurchases.reduce((s,g)=>s+g.weight,0); }
+function getGoldTotalPaid() { return state.goldPurchases.reduce((s,g)=>s+g.paid,0); }
+function getSilverTotalWeight() { return state.silverPurchases.reduce((s,g)=>s+g.weight,0); }
+function getSilverTotalPaid() { return state.silverPurchases.reduce((s,g)=>s+g.paid,0); }
+
 function renderSavings() {
-  document.getElementById('s-current').textContent = fmt(state.savings);
+  const cash = getCashSavingsTotal();
+  const goldWeight = getGoldTotalWeight(), goldPaid = getGoldTotalPaid();
+  const silverWeight = getSilverTotalWeight(), silverPaid = getSilverTotalPaid();
+  const totalValue = cash + goldPaid + silverPaid; // valued at purchase cost
+
+  document.getElementById('hub-cash').textContent = fmt(cash);
+  document.getElementById('hub-gold').textContent = goldWeight.toFixed(1)+'g';
+  document.getElementById('hub-silver').textContent = silverWeight.toFixed(1)+'g';
+  document.getElementById('hub-total').textContent = fmt(totalValue);
+
+  document.getElementById('s-current').textContent = fmt(totalValue);
   document.getElementById('s-goal').textContent = fmt(state.savingsGoal);
-  const pct = state.savingsGoal>0 ? Math.min(state.savings/state.savingsGoal,1) : 0;
+  const pct = state.savingsGoal>0 ? Math.min(totalValue/state.savingsGoal,1) : 0;
   document.getElementById('savings-arc').style.strokeDashoffset = 264*(1-pct);
   document.getElementById('s-pct').textContent = Math.round(pct*100)+'%';
+}
+
+function renderCashSavings() {
+  const cash = getCashSavingsTotal();
+  document.getElementById('cash-total').textContent = fmt(cash);
+  // Group contributions (from "cash savings" expense category) by month
+  const contributions = state.entries.filter(e=>e.type==='expense'&&e.account==='Personal'&&e.category==='cash savings');
+  const byMonth = {};
+  contributions.forEach(e=>{
+    const m = e.date ? e.date.substring(0,7) : 'unknown';
+    byMonth[m] = (byMonth[m]||0)+e.amount;
+  });
+  const months = Object.keys(byMonth).sort().reverse();
+  const el = document.getElementById('cash-monthly-list');
+  if (months.length===0) {
+    el.innerHTML = '<div style="text-align:center;color:var(--text3);font-size:13px;padding:8px 0">No contributions yet. Log an expense under "cash savings" category to start.</div>';
+  } else {
+    el.innerHTML = months.map(m=>{
+      const [y,mo]=m.split('-');
+      const label = m==='unknown' ? 'Unknown' : new Date(y,mo-1,1).toLocaleDateString('en-US',{month:'long',year:'numeric'});
+      return `<div class="setting-row"><span class="setting-label">${label}</span><span class="setting-val" style="color:var(--green);font-weight:600">+${fmt(byMonth[m])}</span></div>`;
+    }).join('');
+  }
+
+  // Transfer history (deposits/withdrawals made via the Transfer screen)
+  const adjustments = [...(state.cashSavingsAdjustments||[])].sort((a,b)=>new Date(b.date)-new Date(a.date));
+  const transferEl = document.getElementById('cash-transfer-list');
+  if (!transferEl) return;
+  if (adjustments.length===0) {
+    transferEl.innerHTML = '<div style="text-align:center;color:var(--text3);font-size:13px;padding:8px 0">No transfers yet.</div>';
+  } else {
+    transferEl.innerHTML = adjustments.map(a=>{
+      const d = a.date ? new Date(a.date+'T00:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}) : '';
+      const isDeposit = a.amount>0;
+      return `<div class="setting-row">
+        <span class="setting-label">${isDeposit?'⬇️':'⬆️'} ${a.note||(isDeposit?'Deposit':'Withdrawal')}<br><span style="font-size:11px;color:var(--text3)">${d}</span></span>
+        <span class="setting-val" style="color:${isDeposit?'var(--green)':'var(--red)'};font-weight:600">${isDeposit?'+':''}${fmt(a.amount)}</span>
+      </div>`;
+    }).join('');
+  }
+}
+
+function renderMetal(metal) {
+  const list = metal==='gold' ? state.goldPurchases : state.silverPurchases;
+  const totalWeight = list.reduce((s,g)=>s+g.weight,0);
+  const totalPaid = list.reduce((s,g)=>s+g.paid,0);
+  document.getElementById(`${metal}-total-weight`).textContent = totalWeight.toFixed(2)+'g';
+  document.getElementById(`${metal}-total-paid`).textContent = fmt(totalPaid);
+  const el = document.getElementById(`${metal}-list`);
+  if (list.length===0) {
+    el.innerHTML = `<div style="text-align:center;color:var(--text3);font-size:13px;padding:8px 0">No ${metal} purchases logged yet.</div>`;
+  } else {
+    el.innerHTML = [...list].sort((a,b)=>new Date(b.date)-new Date(a.date)).map(g=>{
+      const idx = list.indexOf(g);
+      const d = g.date ? new Date(g.date+'T00:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}) : '';
+      return `<div class="metal-item">
+        <div>
+          <div class="metal-weight">${metal==='gold'?'🥇':'🥈'} ${g.weight}g</div>
+          ${g.note?`<div class="metal-note">${g.note}</div>`:''}
+          <div class="metal-date">📅 ${d}</div>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px">
+          <div class="metal-paid">${fmt(g.paid)}</div>
+          <button onclick="deleteMetalPurchase('${metal}',${idx})" style="border:none;background:rgba(255,101,132,.1);color:var(--red);border-radius:6px;padding:4px 8px;font-size:11px;cursor:pointer">✕</button>
+        </div>
+      </div>`;
+    }).join('');
+  }
+}
+
+function openMetalModal(metal) {
+  state.activeMetal = metal;
+  document.getElementById('metal-modal-title').textContent = `Add ${metal} purchase`;
+  document.getElementById('metal-weight').value='';
+  document.getElementById('metal-paid').value='';
+  document.getElementById('metal-note').value='';
+  document.getElementById('metal-date').value = new Date().toISOString().split('T')[0];
+  document.getElementById('metal-modal').classList.add('open');
+  setTimeout(()=>document.getElementById('metal-weight').focus(),300);
+}
+
+function saveMetalPurchase() {
+  const weight = parseFloat(document.getElementById('metal-weight').value);
+  const paid = parseFloat(document.getElementById('metal-paid').value);
+  if (!weight||weight<=0) { showToast('Enter a valid weight',true); return; }
+  if (!paid||paid<=0) { showToast('Enter a valid amount paid',true); return; }
+  const purchase = {
+    id: Date.now().toString(),
+    weight, paid,
+    date: document.getElementById('metal-date').value,
+    note: document.getElementById('metal-note').value.trim()
+  };
+  if (state.activeMetal==='gold') state.goldPurchases.unshift(purchase);
+  else state.silverPurchases.unshift(purchase);
+  saveState();
+  closeModal('metal-modal');
+  renderMetal(state.activeMetal);
+  showToast(`✅ ${weight}g ${state.activeMetal} added`);
+}
+
+function deleteMetalPurchase(metal, idx) {
+  if (!confirm('Delete this purchase?')) return;
+  const list = metal==='gold' ? state.goldPurchases : state.silverPurchases;
+  list.splice(idx,1);
+  saveState();
+  renderMetal(metal);
+  showToast('Purchase deleted');
 }
 
 function renderSettings() {
@@ -1302,12 +1756,242 @@ function deleteCustomCat(key, idx) {
   saveState(); renderManageCats(); showToast('Category deleted');
 }
 
+// ─── CLIENTS / PAYMENTS RECEIVED ──────────────────────────────────────────────
+let clientView = 'byproject';
+function setClientView(v) {
+  clientView = v;
+  document.getElementById('client-view-byproject').classList.toggle('active', v==='byproject');
+  document.getElementById('client-view-bymonth').classList.toggle('active', v==='bymonth');
+  renderClients();
+}
+
+function renderClients() {
+  const el = document.getElementById('clients-content');
+  if (!state.clientPayments || state.clientPayments.length===0) {
+    el.innerHTML = '<div class="empty"><div class="empty-icon">👥</div><div class="empty-text">No client payments logged yet.<br>Add CEK income with a client name to start tracking.</div></div>';
+    return;
+  }
+  if (clientView==='bymonth') { renderClientsByMonth(el); return; }
+
+  // BY PROJECT VIEW — group by client, then by project
+  const byClient = {};
+  state.clientPayments.forEach(p => {
+    if (!byClient[p.client]) byClient[p.client] = [];
+    byClient[p.client].push(p);
+  });
+  const clients = Object.keys(byClient).sort((a,b)=>{
+    const totalA = byClient[a].reduce((s,p)=>s+p.amount,0);
+    const totalB = byClient[b].reduce((s,p)=>s+p.amount,0);
+    return totalB - totalA;
+  });
+
+  el.innerHTML = clients.map(client => {
+    const payments = byClient[client];
+    const total = payments.reduce((s,p)=>s+p.amount,0);
+    const byProject = {};
+    payments.forEach(p => {
+      const proj = p.project || 'No project specified';
+      if (!byProject[proj]) byProject[proj]=[];
+      byProject[proj].push(p);
+    });
+    const projects = Object.keys(byProject).sort((a,b)=>{
+      const ta = byProject[a].reduce((s,p)=>s+p.amount,0);
+      const tb = byProject[b].reduce((s,p)=>s+p.amount,0);
+      return tb-ta;
+    });
+
+    let html = `<div class="card" style="margin-bottom:14px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+        <div style="font-size:16px;font-weight:700">👤 ${client}</div>
+        <div style="font-size:16px;font-weight:700;color:var(--green)">${fmt(total)}</div>
+      </div>`;
+
+    projects.forEach(proj => {
+      const projPayments = byProject[proj];
+      const projTotal = projPayments.reduce((s,p)=>s+p.amount,0);
+      html += `<div style="background:var(--bg3);border-radius:var(--radius-sm);padding:10px 12px;margin-bottom:8px">
+        <div style="display:flex;justify-content:space-between;margin-bottom:6px">
+          <span style="font-size:13px;font-weight:600">🏗️ ${proj}</span>
+          <span style="font-size:13px;font-weight:700;color:#5ba0ff">${fmt(projTotal)}</span>
+        </div>`;
+      [...projPayments].sort((a,b)=>new Date(b.date)-new Date(a.date)).forEach(p=>{
+        const d = p.date ? new Date(p.date+'T00:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}) : '';
+        html += `<div style="display:flex;justify-content:space-between;font-size:12px;color:var(--text2);padding:3px 0">
+          <span>📅 ${d}${p.description?' · '+p.description:''}</span>
+          <span style="color:var(--text)">${fmt(p.amount)}</span>
+        </div>`;
+      });
+      html += `</div>`;
+    });
+
+    html += `</div>`;
+    return html;
+  }).join('');
+}
+
+function renderClientsByMonth(el) {
+  // Group by client, then by month
+  const byClient = {};
+  state.clientPayments.forEach(p => {
+    if (!byClient[p.client]) byClient[p.client] = {};
+    const m = p.date ? p.date.substring(0,7) : 'unknown';
+    if (!byClient[p.client][m]) byClient[p.client][m] = 0;
+    byClient[p.client][m] += p.amount;
+  });
+  const clients = Object.keys(byClient).sort((a,b)=>{
+    const totalA = Object.values(byClient[a]).reduce((s,v)=>s+v,0);
+    const totalB = Object.values(byClient[b]).reduce((s,v)=>s+v,0);
+    return totalB - totalA;
+  });
+
+  el.innerHTML = clients.map(client => {
+    const months = byClient[client];
+    const total = Object.values(months).reduce((s,v)=>s+v,0);
+    const sortedMonths = Object.keys(months).sort().reverse();
+    let html = `<div class="card" style="margin-bottom:14px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+        <div style="font-size:16px;font-weight:700">👤 ${client}</div>
+        <div style="font-size:16px;font-weight:700;color:var(--green)">${fmt(total)}</div>
+      </div>`;
+    sortedMonths.forEach(m => {
+      const label = m==='unknown' ? 'Unknown date' : new Date(m.split('-')[0],m.split('-')[1]-1,1).toLocaleDateString('en-US',{month:'long',year:'numeric'});
+      html += `<div class="setting-row"><span class="setting-label">${label}</span><span class="setting-val" style="color:var(--green);font-weight:600">${fmt(months[m])}</span></div>`;
+    });
+    html += `</div>`;
+    return html;
+  }).join('');
+}
+
+// ─── SUBCONTRACTORS / PAYMENTS MADE ───────────────────────────────────────────
+let subView = 'bysupplier';
+function setSubView(v) {
+  subView = v;
+  document.getElementById('sub-view-bysupplier').classList.toggle('active', v==='bysupplier');
+  document.getElementById('sub-view-bymonth').classList.toggle('active', v==='bymonth');
+  renderSubcontractors();
+}
+
+// Every CEK expense is a "payment" to someone — grouped by supplier name if filled in,
+// otherwise grouped by category (e.g. "materials", "transport") so nothing is ever missed.
+function getAllPayeeExpenses() {
+  return state.entries
+    .filter(e=>e.type==='expense'&&e.account==='CEK'&&!e.linkedTransfer)
+    .map(e=>({
+      payee: e.supplier && e.supplier.trim() ? e.supplier.trim() : ('📁 '+e.category),
+      isNamedSupplier: !!(e.supplier && e.supplier.trim()),
+      category: e.category,
+      project: e.project || 'No project',
+      amount: e.amount,
+      date: e.date,
+      note: e.description
+    }));
+}
+
+function renderSubcontractors() {
+  const el = document.getElementById('subcontractors-content');
+  const payments = getAllPayeeExpenses();
+  if (payments.length===0) {
+    el.innerHTML = '<div class="empty"><div class="empty-icon">👷</div><div class="empty-text">No CEK expenses logged yet.<br>Any expense you add under CEK Business will appear here, grouped by supplier (or by category if no supplier name was entered).</div></div>';
+    return;
+  }
+  if (subView==='bymonth') { renderSubcontractorsByMonth(el, payments); return; }
+
+  // BY SUPPLIER/PAYEE VIEW — group by payee name, then by project
+  const byPayee = {};
+  payments.forEach(p => {
+    if (!byPayee[p.payee]) byPayee[p.payee] = [];
+    byPayee[p.payee].push(p);
+  });
+  const payees = Object.keys(byPayee).sort((a,b)=>{
+    const ta = byPayee[a].reduce((s,p)=>s+p.amount,0);
+    const tb = byPayee[b].reduce((s,p)=>s+p.amount,0);
+    return tb-ta;
+  });
+
+  el.innerHTML = payees.map(payee => {
+    const payeePayments = byPayee[payee];
+    const total = payeePayments.reduce((s,p)=>s+p.amount,0);
+    const isNamed = payeePayments[0].isNamedSupplier;
+    const byProject = {};
+    payeePayments.forEach(p => {
+      if (!byProject[p.project]) byProject[p.project]=[];
+      byProject[p.project].push(p);
+    });
+    const projects = Object.keys(byProject).sort((a,b)=>{
+      const ta = byProject[a].reduce((s,p)=>s+p.amount,0);
+      const tb = byProject[b].reduce((s,p)=>s+p.amount,0);
+      return tb-ta;
+    });
+
+    let html = `<div class="card" style="margin-bottom:14px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+        <div style="font-size:16px;font-weight:700">${isNamed?'👷 ':''}${payee}</div>
+        <div style="font-size:16px;font-weight:700;color:var(--red)">${fmt(total)}</div>
+      </div>`;
+
+    projects.forEach(proj => {
+      const projPayments = byProject[proj];
+      const projTotal = projPayments.reduce((s,p)=>s+p.amount,0);
+      html += `<div style="background:var(--bg3);border-radius:var(--radius-sm);padding:10px 12px;margin-bottom:8px">
+        <div style="display:flex;justify-content:space-between;margin-bottom:6px">
+          <span style="font-size:13px;font-weight:600">🏗️ ${proj}</span>
+          <span style="font-size:13px;font-weight:700;color:#5ba0ff">${fmt(projTotal)}</span>
+        </div>`;
+      [...projPayments].sort((a,b)=>new Date(b.date)-new Date(a.date)).forEach(p=>{
+        const d = p.date ? new Date(p.date+'T00:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}) : '';
+        html += `<div style="display:flex;justify-content:space-between;font-size:12px;color:var(--text2);padding:3px 0">
+          <span>📅 ${d}${p.note?' · '+p.note:''}</span>
+          <span style="color:var(--text)">${fmt(p.amount)}</span>
+        </div>`;
+      });
+      html += `</div>`;
+    });
+
+    html += `</div>`;
+    return html;
+  }).join('');
+}
+
+function renderSubcontractorsByMonth(el, payments) {
+  const byPayee = {};
+  payments.forEach(p => {
+    if (!byPayee[p.payee]) byPayee[p.payee] = {};
+    const m = p.date ? p.date.substring(0,7) : 'unknown';
+    if (!byPayee[p.payee][m]) byPayee[p.payee][m]=0;
+    byPayee[p.payee][m] += p.amount;
+  });
+  const payees = Object.keys(byPayee).sort((a,b)=>{
+    const ta = Object.values(byPayee[a]).reduce((s,v)=>s+v,0);
+    const tb = Object.values(byPayee[b]).reduce((s,v)=>s+v,0);
+    return tb-ta;
+  });
+
+  el.innerHTML = payees.map(payee => {
+    const months = byPayee[payee];
+    const total = Object.values(months).reduce((s,v)=>s+v,0);
+    const sortedMonths = Object.keys(months).sort().reverse();
+    let html = `<div class="card" style="margin-bottom:14px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+        <div style="font-size:16px;font-weight:700">${payee}</div>
+        <div style="font-size:16px;font-weight:700;color:var(--red)">${fmt(total)}</div>
+      </div>`;
+    sortedMonths.forEach(m => {
+      const label = m==='unknown' ? 'Unknown date' : new Date(m.split('-')[0],m.split('-')[1]-1,1).toLocaleDateString('en-US',{month:'long',year:'numeric'});
+      html += `<div class="setting-row"><span class="setting-label">${label}</span><span class="setting-val" style="color:var(--red);font-weight:600">${fmt(months[m])}</span></div>`;
+    });
+    html += `</div>`;
+    return html;
+  }).join('');
+}
+
 // ─── ADD FORM ─────────────────────────────────────────────────────────────────
 function resetForm() {
   document.getElementById('f-amount').value='';
   document.getElementById('f-desc').value='';
   document.getElementById('f-project').value='';
   document.getElementById('f-supplier').value='';
+  document.getElementById('f-client').value='';
+  document.getElementById('f-inc-project').value='';
   document.getElementById('t-amount').value='';
   document.getElementById('t-reason').value='';
   document.getElementById('t-project').value='';
@@ -1323,15 +2007,40 @@ function setFormType(type) {
   document.getElementById('transfer-form').style.display = isTransfer?'block':'none';
   document.getElementById('normal-form').style.display = isTransfer?'none':'block';
   if (isTransfer) {
-    // populate project autocomplete for transfer
     const tpl = document.getElementById('t-projects-list');
     if (tpl) tpl.innerHTML = state.projects.map(p=>`<option value="${p}">`).join('');
     document.getElementById('t-date').value = new Date().toISOString().split('T')[0];
+    document.getElementById('t-from').value = 'CEK';
+    document.getElementById('t-to').value = 'Personal';
+    onTransferAccountChange();
   }
   if (!isTransfer) {
     state.selectedCat='';
+    updateCEKFields();
     renderCatContainer();
   }
+}
+
+const ACCOUNT_LABELS = {
+  'CEK': '🏗️ CEK Business',
+  'Personal': '👤 Personal',
+  'CashSavings': '💵 Cash Savings'
+};
+
+function onTransferAccountChange() {
+  const from = document.getElementById('t-from').value;
+  const to = document.getElementById('t-to').value;
+  if (from===to) {
+    // Auto-pick a different "to" account so you can never transfer to the same account
+    const options = ['CEK','Personal','CashSavings'].filter(a=>a!==from);
+    document.getElementById('t-to').value = options[0];
+  }
+  const finalTo = document.getElementById('t-to').value;
+  document.getElementById('t-box-from-name').textContent = ACCOUNT_LABELS[from];
+  document.getElementById('t-box-to-name').textContent = ACCOUNT_LABELS[finalTo];
+  const toCatLabel = finalTo==='CEK' ? 'transfer from CEK' : finalTo==='Personal' ? `transfer from ${from==='CashSavings'?'cash savings':from.toLowerCase()}` : 'transfer to cash savings';
+  document.getElementById('t-explainer').textContent =
+    `Money moves from ${ACCOUNT_LABELS[from]} into ${ACCOUNT_LABELS[finalTo]} — recorded as income on the receiving account.`;
 }
 
 function setAccount(acct) {
@@ -1347,7 +2056,16 @@ function setAccount(acct) {
 }
 
 function updateCEKFields() {
-  document.getElementById('cek-fields').style.display = state.formAccount==='CEK' ? 'block' : 'none';
+  const isCek = state.formAccount==='CEK';
+  document.getElementById('cek-fields').style.display = isCek ? 'block' : 'none';
+  if (!isCek) return;
+  const isIncome = state.formType==='income';
+  document.getElementById('cek-expense-fields').style.display = isIncome ? 'none' : 'block';
+  document.getElementById('cek-income-fields').style.display = isIncome ? 'block' : 'none';
+  if (isIncome) {
+    document.getElementById('clients-list').innerHTML = state.clients.map(c=>`<option value="${c}">`).join('');
+    document.getElementById('projects-list-2').innerHTML = state.projects.map(p=>`<option value="${p}">`).join('');
+  }
 }
 
 function refreshAutocomplete() {
@@ -1355,6 +2073,8 @@ function refreshAutocomplete() {
   const sl = document.getElementById('suppliers-list');
   pl.innerHTML = state.projects.map(p=>`<option value="${p}">`).join('');
   sl.innerHTML = state.suppliers.map(s=>`<option value="${s}">`).join('');
+  document.getElementById('clients-list').innerHTML = state.clients.map(c=>`<option value="${c}">`).join('');
+  document.getElementById('projects-list-2').innerHTML = state.projects.map(p=>`<option value="${p}">`).join('');
 }
 
 function getCatKey() {
@@ -1427,57 +2147,141 @@ function saveNewCategory() {
 function saveTransfer() {
   const amount = parseFloat(document.getElementById('t-amount').value);
   if (!amount||amount<=0) { showToast('Enter a valid amount',true); return; }
+  const fromAccount = document.getElementById('t-from').value;
+  const toAccount = document.getElementById('t-to').value;
+  if (fromAccount===toAccount) { showToast('Pick two different accounts',true); return; }
+
   const reason = document.getElementById('t-reason').value.trim();
   const project = document.getElementById('t-project').value.trim();
   if (project && !state.projects.includes(project)) state.projects.push(project);
-  const transferId = Date.now().toString();
   const date = document.getElementById('t-date').value;
   const time = new Date().toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit'});
-  // One linked transfer object — type:'transfer', stored once, renders as dual-account
-  const transfer = {
-    id: transferId,
-    date, time,
-    type: 'transfer',
-    account: 'CEK→Personal',
-    category: 'transfer',
-    description: reason || 'CEK to Personal transfer',
-    amount,
-    project,
-    supplier: '',
-    synced: false
-  };
-  state.entries.unshift(transfer);
+  const linkId = Date.now().toString();
+
+  // Cash Savings is a virtual account (no real CEK/Personal balance) — represented via an adjustment ledger
+  if (fromAccount==='CashSavings') {
+    const available = getCashSavingsTotal();
+    if (amount > available) { showToast(`Only ${fmt(available)} available in Cash Savings`,true); return; }
+    state.cashSavingsAdjustments.push({ id:linkId+'_w', amount:-amount, date, note: reason || `Withdrawn to ${ACCOUNT_LABELS[toAccount]}` });
+  }
+  if (toAccount==='CashSavings') {
+    state.cashSavingsAdjustments.push({ id:linkId+'_d', amount: amount, date, note: reason || `Deposited from ${ACCOUNT_LABELS[fromAccount]}` });
+  }
+
+  const fromCatMap = { 'CEK':'transfer to personal', 'Personal':'transfer to CEK', 'CashSavings':'transfer to savings' };
+  const toCatMap = { 'CEK':'transfer from personal', 'Personal':'transfer from CEK', 'CashSavings':'transfer from cash savings' };
+  // Smarter category label when either side is Cash Savings
+  const fromCat = fromAccount==='CashSavings' ? '' : (toAccount==='CashSavings' ? 'transfer to cash savings' : fromCatMap[fromAccount]);
+  const toCat = toAccount==='CashSavings' ? '' : (fromAccount==='CashSavings' ? 'transfer from cash savings' : toCatMap[toAccount]);
+
+  // Only create a REAL expense/income entry for the side that is an actual account (CEK or Personal)
+  if (fromAccount==='CEK' || fromAccount==='Personal') {
+    const outEntry = {
+      id: linkId+'_out', date, time,
+      type: 'expense', account: fromAccount,
+      category: fromCat,
+      description: reason || `Transfer to ${ACCOUNT_LABELS[toAccount]}`,
+      amount, project, supplier:'', client:'',
+      linkedTransfer: linkId, synced: false
+    };
+    state.entries.unshift(outEntry);
+    if (state.sheetsUrl) syncEntry(outEntry);
+  }
+  if (toAccount==='CEK' || toAccount==='Personal') {
+    const inEntry = {
+      id: linkId+'_in', date, time,
+      type: 'income', account: toAccount,
+      category: toCat,
+      description: reason || `Transfer from ${ACCOUNT_LABELS[fromAccount]}`,
+      amount, project, supplier:'', client:'',
+      linkedTransfer: linkId, synced: false
+    };
+    state.entries.unshift(inEntry);
+    if (state.sheetsUrl) syncEntry(inEntry);
+  }
+
   saveState();
-  showToast(`✅ ${fmt(amount)} transferred`);
+  showToast(`✅ ${fmt(amount)} moved: ${ACCOUNT_LABELS[fromAccount]} → ${ACCOUNT_LABELS[toAccount]}`);
   resetForm();
   renderAll();
-  if (state.sheetsUrl) syncEntry(transfer);
   setTimeout(()=>showPage('home'),600);
+}
+
+function ensureProjectExists(projectName, client) {
+  if (!projectName) return;
+  if (!state.cekProjects) state.cekProjects = [];
+  const existing = state.cekProjects.find(p=>p.name===projectName);
+  if (existing) {
+    // If we now know the client and the project didn't have one yet, fill it in
+    if (client && !existing.client) { existing.client = client; }
+    return existing;
+  }
+  // Auto-create a new project — contract value starts at 0, fully editable later in Budget
+  const proj = {
+    id: Date.now().toString()+Math.floor(Math.random()*1000),
+    name: projectName,
+    client: client || '',
+    contractValue: 0,
+    status: 'active',
+    suppliers: [],
+    createdAt: new Date().toISOString(),
+    autoCreated: true
+  };
+  state.cekProjects.unshift(proj);
+  return proj;
 }
 
 function saveEntry() {
   const amount = parseFloat(document.getElementById('f-amount').value);
   if (!amount||amount<=0) { showToast('Enter a valid amount',true); return; }
   if (!state.selectedCat) { showToast('Select a category',true); return; }
-  const project = document.getElementById('f-project').value.trim();
-  const supplier = document.getElementById('f-supplier').value.trim();
-  // Save project & supplier for autocomplete
-  if (project && !state.projects.includes(project)) { state.projects.push(project); }
-  if (supplier && !state.suppliers.includes(supplier)) { state.suppliers.push(supplier); }
+
+  const isCek = state.formAccount==='CEK';
+  const isIncome = state.formType==='income';
+  let project='', supplier='', client='';
+
+  if (isCek && isIncome) {
+    client = document.getElementById('f-client').value.trim();
+    project = document.getElementById('f-inc-project').value.trim();
+    if (client && !state.clients.includes(client)) state.clients.push(client);
+    if (project && !state.projects.includes(project)) state.projects.push(project);
+    // Auto-create the project in Budget → CEK Projects if it doesn't exist yet
+    if (project) ensureProjectExists(project, client);
+  } else if (isCek && !isIncome) {
+    project = document.getElementById('f-project').value.trim();
+    supplier = document.getElementById('f-supplier').value.trim();
+    if (project && !state.projects.includes(project)) state.projects.push(project);
+    if (supplier && !state.suppliers.includes(supplier)) state.suppliers.push(supplier);
+    // Also auto-create here in case an expense references a brand-new project first
+    if (project) ensureProjectExists(project, '');
+  }
+
+  const description = document.getElementById('f-desc').value.trim();
+  const date = document.getElementById('f-date').value;
+
   const entry = {
     id: Date.now().toString(),
-    date: document.getElementById('f-date').value,
+    date,
     time: new Date().toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit'}),
     type: state.formType,
     account: state.formAccount,
     category: state.selectedCat,
-    description: document.getElementById('f-desc').value.trim(),
+    description,
     amount,
-    project: state.formAccount==='CEK' ? project : '',
-    supplier: state.formAccount==='CEK' ? supplier : '',
+    project: isCek ? project : '',
+    supplier: isCek && !isIncome ? supplier : '',
+    client: isCek && isIncome ? client : '',
     synced: false
   };
   state.entries.unshift(entry);
+
+  // Track client payments separately so we can show "what I got from client X across projects"
+  if (isCek && isIncome && client) {
+    state.clientPayments.unshift({
+      id: entry.id, client, project, amount, date, description
+    });
+  }
+
   saveState();
   showToast('✅ Saved!');
   resetForm();
@@ -1486,13 +2290,7 @@ function saveEntry() {
   setTimeout(()=>showPage('home'),600);
 }
 
-// ─── SAVINGS ──────────────────────────────────────────────────────────────────
-function addToSavings() {
-  const val=parseFloat(document.getElementById('s-add').value);
-  if (!val||val<=0) { showToast('Enter an amount',true); return; }
-  state.savings+=val; document.getElementById('s-add').value='';
-  saveState(); renderSavings(); showToast('+'+fmt(val)+' saved!');
-}
+// ─── SAVINGS GOAL ─────────────────────────────────────────────────────────────
 function setGoal() {
   const val=parseFloat(document.getElementById('s-goal-input').value);
   if (!val||val<=0) { showToast('Enter a valid goal',true); return; }
@@ -1549,7 +2347,22 @@ function showToast(msg, isError=false) {
   setTimeout(()=>t.className='toast'+(isError?' error':''),2500);
 }
 function confirmDelete(idx) {
+  const entry = state.entries[idx];
+  if (!entry) return;
+  if (entry.linkedTransfer) {
+    if (!confirm('This is part of a transfer. Deleting it will also delete the matching entry on the other account. Continue?')) return;
+    const linkId = entry.linkedTransfer;
+    state.entries = state.entries.filter(e=>e.linkedTransfer!==linkId);
+    // Also reverse any Cash Savings adjustment that shares this transfer's timestamp-based id prefix
+    state.cashSavingsAdjustments = (state.cashSavingsAdjustments||[]).filter(a=>!a.id.startsWith(linkId));
+    saveState(); renderAll(); showToast('Transfer deleted');
+    return;
+  }
   if (!confirm('Delete this entry?')) return;
+  // If this was a client payment (CEK income with a client), remove its matching record too
+  if (entry.type==='income' && entry.account==='CEK' && entry.client) {
+    state.clientPayments = state.clientPayments.filter(cp=>cp.id!==entry.id);
+  }
   state.entries.splice(idx,1); saveState(); renderAll(); showToast('Entry deleted');
 }
 function exportCSV() {
