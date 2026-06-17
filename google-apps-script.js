@@ -1,152 +1,123 @@
 // ============================================================
-// MY FINANCE TRACKER — Google Apps Script
-// Paste this entire file into your Apps Script editor
-// then Deploy as a Web App (Execute as: Me, Access: Anyone)
+// MY FINANCE TRACKER — Google Apps Script (Two-Way Sync v2)
+// Paste this entire file into your Apps Script editor,
+// replacing everything that was there before.
+// Then Deploy as a Web App (Execute as: Me, Access: Anyone)
+// ============================================================
+//
+// HOW THIS WORKS:
+// - The full app state (entries, projects, suppliers, budgets,
+//   gold/silver purchases, everything) is stored as ONE JSON
+//   blob in a hidden "AppState" sheet, tagged with a timestamp.
+// - Every device that opens the app PULLS this blob on load and
+//   MERGES it with whatever is stored locally, using each
+//   record's unique ID — so nothing is lost or duplicated.
+// - A human-readable "Transactions" sheet is also kept in sync
+//   automatically, purely so you can browse/export your data
+//   normally in Google Sheets. It is NOT the source of truth —
+//   the AppState blob is.
 // ============================================================
 
-const SHEET_NAME = "Transactions";
-const HEADERS = ["ID", "Date", "Time", "Type", "Account", "Category", "Description", "Amount", "Synced At"];
+const STATE_SHEET = "AppState";
+const LOG_SHEET = "Transactions";
+const LOG_HEADERS = ["ID", "Date", "Time", "Type", "Account", "Category", "Project", "Supplier/Client", "Description", "Amount"];
 
 function doPost(e) {
   try {
     const data = JSON.parse(e.postData.contents);
-    if (data.action === "addEntry") {
-      return addEntry(data.entry);
-    }
-    if (data.action === "syncAll") {
-      return syncAll(data.entries);
-    }
+    if (data.action === "pushState") return pushState(data.state, data.deviceId);
+    if (data.action === "pullState") return pullState();
+    return jsonOut({ status: "error", message: "Unknown action" });
   } catch (err) {
-    return ContentService.createTextOutput(
-      JSON.stringify({ status: "error", message: err.message })
-    ).setMimeType(ContentService.MimeType.JSON);
+    return jsonOut({ status: "error", message: err.message });
   }
 }
 
 function doGet(e) {
-  return ContentService.createTextOutput(
-    JSON.stringify({ status: "ok", message: "Finance tracker is running!" })
-  ).setMimeType(ContentService.MimeType.JSON);
+  // Allow pulling via GET too (some environments restrict POST)
+  if (e && e.parameter && e.parameter.action === "pullState") {
+    return pullState();
+  }
+  return jsonOut({ status: "ok", message: "Finance tracker sync is running!" });
 }
 
-function getOrCreateSheet() {
+function jsonOut(obj) {
+  return ContentService.createTextOutput(JSON.stringify(obj)).setMimeType(ContentService.MimeType.JSON);
+}
+
+function getStateSheet() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
-  let sheet = ss.getSheetByName(SHEET_NAME);
+  let sheet = ss.getSheetByName(STATE_SHEET);
   if (!sheet) {
-    sheet = ss.insertSheet(SHEET_NAME);
-    // Add headers with formatting
-    const headerRange = sheet.getRange(1, 1, 1, HEADERS.length);
-    headerRange.setValues([HEADERS]);
-    headerRange.setFontWeight("bold");
-    headerRange.setBackground("#6c63ff");
-    headerRange.setFontColor("#ffffff");
-    sheet.setFrozenRows(1);
-    sheet.setColumnWidth(1, 160);
-    sheet.setColumnWidth(2, 100);
-    sheet.setColumnWidth(3, 80);
-    sheet.setColumnWidth(4, 90);
-    sheet.setColumnWidth(5, 110);
-    sheet.setColumnWidth(6, 130);
-    sheet.setColumnWidth(7, 200);
-    sheet.setColumnWidth(8, 90);
-    sheet.setColumnWidth(9, 160);
+    sheet = ss.insertSheet(STATE_SHEET);
+    sheet.getRange(1,1,1,3).setValues([["UpdatedAt","DeviceId","StateJSON"]]);
+    sheet.hideSheet();
   }
   return sheet;
 }
 
-function addEntry(entry) {
-  const sheet = getOrCreateSheet();
-  const now = new Date().toISOString();
-  const row = [
-    entry.id || now,
-    entry.date || "",
-    entry.time || "",
-    entry.type || "",
-    entry.account || "",
-    entry.category || "",
-    entry.description || "",
-    entry.amount || 0,
-    now
-  ];
-
-  // Check for duplicate ID
-  const existingIds = sheet.getRange(2, 1, Math.max(sheet.getLastRow() - 1, 1), 1).getValues().flat();
-  if (existingIds.includes(row[0])) {
-    return ContentService.createTextOutput(
-      JSON.stringify({ status: "duplicate", message: "Entry already exists" })
-    ).setMimeType(ContentService.MimeType.JSON);
+// ── PULL: any device calls this on load to get the latest known state ──
+function pullState() {
+  const sheet = getStateSheet();
+  if (sheet.getLastRow() < 2) {
+    return jsonOut({ status: "empty" });
   }
+  const row = sheet.getRange(sheet.getLastRow(), 1, 1, 3).getValues()[0];
+  return jsonOut({ status: "ok", updatedAt: row[0], deviceId: row[1], state: JSON.parse(row[2]) });
+}
 
-  sheet.appendRow(row);
-
-  // Color rows by type
-  const lastRow = sheet.getLastRow();
-  if (entry.type === "income") {
-    sheet.getRange(lastRow, 1, 1, HEADERS.length).setBackground("#e8f5e9");
+// ── PUSH: a device sends its full (already-merged) state up ──
+function pushState(state, deviceId) {
+  const sheet = getStateSheet();
+  const now = new Date().toISOString();
+  // Always overwrite row 2 — we only ever keep ONE current snapshot
+  if (sheet.getLastRow() < 2) {
+    sheet.appendRow([now, deviceId||"unknown", JSON.stringify(state)]);
   } else {
-    sheet.getRange(lastRow, 1, 1, HEADERS.length).setBackground("#ffffff");
+    sheet.getRange(2,1,1,3).setValues([[now, deviceId||"unknown", JSON.stringify(state)]]);
   }
-
-  return ContentService.createTextOutput(
-    JSON.stringify({ status: "success", message: "Entry added", row: lastRow })
-  ).setMimeType(ContentService.MimeType.JSON);
+  // Also refresh the human-readable Transactions log for browsing in Sheets
+  try { refreshTransactionLog(state); } catch(err) {}
+  return jsonOut({ status: "success", updatedAt: now });
 }
 
-function syncAll(entries) {
-  if (!entries || !entries.length) {
-    return ContentService.createTextOutput(
-      JSON.stringify({ status: "success", message: "Nothing to sync" })
-    ).setMimeType(ContentService.MimeType.JSON);
-  }
-
-  const sheet = getOrCreateSheet();
-  const existingIds = sheet.getLastRow() > 1
-    ? sheet.getRange(2, 1, sheet.getLastRow() - 1, 1).getValues().flat()
-    : [];
-
-  let added = 0;
-  const now = new Date().toISOString();
-
-  entries.forEach(entry => {
-    if (!existingIds.includes(entry.id)) {
-      const row = [
-        entry.id || now,
-        entry.date || "",
-        entry.time || "",
-        entry.type || "",
-        entry.account || "",
-        entry.category || "",
-        entry.description || "",
-        entry.amount || 0,
-        now
-      ];
-      sheet.appendRow(row);
-      const lastRow = sheet.getLastRow();
-      if (entry.type === "income") {
-        sheet.getRange(lastRow, 1, 1, HEADERS.length).setBackground("#e8f5e9");
-      }
-      added++;
-    }
-  });
-
-  return ContentService.createTextOutput(
-    JSON.stringify({ status: "success", message: `Synced ${added} new entries`, added })
-  ).setMimeType(ContentService.MimeType.JSON);
-}
-
-// ============================================================
-// OPTIONAL: Run this function manually once to create a
-// "Monthly Summary" sheet with automatic totals
-// ============================================================
-function createSummarySheet() {
+// ── Rebuilds the readable Transactions sheet from the latest entries ──
+function refreshTransactionLog(state) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
-  let sheet = ss.getSheetByName("Monthly Summary");
+  let sheet = ss.getSheetByName(LOG_SHEET);
   if (!sheet) {
-    sheet = ss.insertSheet("Monthly Summary");
+    sheet = ss.insertSheet(LOG_SHEET);
   }
   sheet.clearContents();
-  const headers = ["Month", "Personal Income", "Personal Expenses", "Personal Net", "CEK Income", "CEK Expenses", "CEK Net"];
-  sheet.getRange(1, 1, 1, headers.length).setValues([headers]).setFontWeight("bold").setBackground("#6c63ff").setFontColor("#ffffff");
+  const headerRange = sheet.getRange(1,1,1,LOG_HEADERS.length);
+  headerRange.setValues([LOG_HEADERS]);
+  headerRange.setFontWeight("bold");
+  headerRange.setBackground("#6c63ff");
+  headerRange.setFontColor("#ffffff");
   sheet.setFrozenRows(1);
-  SpreadsheetApp.getUi().alert("Monthly Summary sheet created! It will auto-populate as you add entries.");
+
+  const entries = (state.entries||[]).slice().sort((a,b)=> (a.date<b.date?1:-1));
+  if (entries.length===0) return;
+
+  const rows = entries.map(en => [
+    en.id || "",
+    en.date || "",
+    en.time || "",
+    en.type || "",
+    en.account || "",
+    en.category || "",
+    en.project || "",
+    en.supplier || en.client || "",
+    en.description || "",
+    en.amount || 0
+  ]);
+  sheet.getRange(2,1,rows.length,LOG_HEADERS.length).setValues(rows);
+
+  // Color income rows light green for quick scanning
+  for (let i=0;i<entries.length;i++) {
+    if (entries[i].type==='income') {
+      sheet.getRange(i+2,1,1,LOG_HEADERS.length).setBackground("#e8f5e9");
+    }
+  }
+  sheet.autoResizeColumns(1, LOG_HEADERS.length);
 }
