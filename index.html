@@ -801,6 +801,60 @@
   </div>
 </div>
 
+<!-- EDIT ENTRY MODAL -->
+<div class="modal-overlay" id="edit-entry-modal" onclick="closeModal('edit-entry-modal',event)">
+  <div class="modal-sheet">
+    <div class="modal-handle"></div>
+    <div class="modal-title" id="edit-entry-title">Edit entry</div>
+    <div id="edit-entry-transfer-note" style="display:none;font-size:12px;color:var(--text3);text-align:center;margin-bottom:14px;background:var(--bg3);border-radius:var(--radius-sm);padding:10px">This is part of a transfer. Editing the amount updates both linked sides automatically.</div>
+    <div class="form-group">
+      <label class="form-label">Type</label>
+      <div class="account-toggle">
+        <button class="acct-btn personal" id="edit-type-expense" onclick="setEditEntryType('expense')">💸 Expense</button>
+        <button class="acct-btn cek" id="edit-type-income" onclick="setEditEntryType('income')">💰 Income</button>
+      </div>
+    </div>
+    <div class="form-group">
+      <label class="form-label">Account</label>
+      <div class="account-toggle">
+        <button class="acct-btn personal" id="edit-acct-personal" onclick="setEditEntryAccount('Personal')">👤 Personal</button>
+        <button class="acct-btn cek" id="edit-acct-cek" onclick="setEditEntryAccount('CEK')">🏗️ CEK</button>
+      </div>
+    </div>
+    <div class="form-group">
+      <label class="form-label">Amount ($)</label>
+      <input type="number" inputmode="decimal" class="form-input amount-input" id="edit-amount" placeholder="0.00">
+    </div>
+    <div class="form-group">
+      <label class="form-label">Category</label>
+      <input type="text" class="form-input" id="edit-category" placeholder="e.g. eating out, materials...">
+    </div>
+    <div class="form-group" id="edit-project-group">
+      <label class="form-label">Project</label>
+      <input type="text" class="form-input" id="edit-project" placeholder="Optional" list="projects-list">
+    </div>
+    <div class="form-group" id="edit-supplier-group">
+      <label class="form-label">Supplier</label>
+      <input type="text" class="form-input" id="edit-supplier" placeholder="Optional" list="suppliers-list">
+    </div>
+    <div class="form-group" id="edit-client-group">
+      <label class="form-label">Client</label>
+      <input type="text" class="form-input" id="edit-client" placeholder="Optional" list="clients-list">
+    </div>
+    <div class="form-group">
+      <label class="form-label">Description</label>
+      <input type="text" class="form-input" id="edit-desc" placeholder="Optional">
+    </div>
+    <div class="form-group">
+      <label class="form-label">Date</label>
+      <input type="date" class="form-input" id="edit-date">
+    </div>
+    <button class="submit-btn" onclick="saveEditedEntry()">Save changes</button>
+    <button class="btn-secondary" style="color:var(--red);border-color:rgba(255,101,132,.3)" onclick="deleteFromEditModal()">🗑 Delete entry</button>
+    <button class="btn-secondary" onclick="closeModal('edit-entry-modal')">Cancel</button>
+  </div>
+</div>
+
 <!-- TOAST -->
 <div class="toast" id="toast"></div>
 
@@ -1043,7 +1097,7 @@ function renderHome() {
   const recent = [...me].filter(e=>!(e.linkedTransfer && e.type==='expense')).sort((a,b)=>new Date(b.date)-new Date(a.date)).slice(0,8);
   document.getElementById('recent-list').innerHTML = recent.length===0
     ? '<div class="empty"><div class="empty-icon">📭</div><div class="empty-text">No entries yet.<br>Tap + to add your first one.</div></div>'
-    : recent.map(e=>`<div onclick="confirmDelete(${state.entries.indexOf(e)})">${txnHTML(e)}</div>`).join('');
+    : recent.map(e=>`<div onclick="openEditEntry(${state.entries.indexOf(e)})">${txnHTML(e)}</div>`).join('');
 }
 
 function txnHTML(e) {
@@ -1090,7 +1144,7 @@ function renderHistory() {
   else if (typeFilter) entries = entries.filter(e=>e.type===typeFilter && !e.linkedTransfer);
   document.getElementById('history-list').innerHTML = entries.length===0
     ? '<div class="empty"><div class="empty-icon">📋</div><div class="empty-text">No entries found.</div></div>'
-    : entries.map(e=>`<div onclick="confirmDelete(${state.entries.indexOf(e)})">${txnHTML(e)}</div>`).join('');
+    : entries.map(e=>`<div onclick="openEditEntry(${state.entries.indexOf(e)})">${txnHTML(e)}</div>`).join('');
 }
 
 function renderBudget() {
@@ -2497,6 +2551,128 @@ function showToast(msg, isError=false) {
   t.className='toast'+(isError?' error':'')+' show';
   setTimeout(()=>t.className='toast'+(isError?' error':''),2500);
 }
+// ─── EDIT ENTRY MODAL ──────────────────────────────────────────────────────────
+let editingEntryIdx = null;
+
+function openEditEntry(idx) {
+  const entry = state.entries[idx];
+  if (!entry) return;
+  editingEntryIdx = idx;
+
+  document.getElementById('edit-entry-title').textContent = entry.linkedTransfer ? 'Edit transfer' : 'Edit entry';
+  document.getElementById('edit-entry-transfer-note').style.display = entry.linkedTransfer ? 'block' : 'none';
+
+  setEditEntryType(entry.type==='income' ? 'income' : 'expense');
+  setEditEntryAccount(entry.account==='CEK' ? 'CEK' : 'Personal');
+
+  document.getElementById('edit-amount').value = entry.amount;
+  document.getElementById('edit-category').value = entry.category || '';
+  document.getElementById('edit-project').value = entry.project || '';
+  document.getElementById('edit-supplier').value = entry.supplier || '';
+  document.getElementById('edit-client').value = entry.client || '';
+  document.getElementById('edit-desc').value = entry.description || '';
+  document.getElementById('edit-date').value = entry.date || '';
+
+  // Transfers always move between CEK and Personal as a pair — keep type/account locked to avoid breaking the link
+  document.getElementById('edit-type-expense').style.pointerEvents = entry.linkedTransfer ? 'none' : 'auto';
+  document.getElementById('edit-type-income').style.pointerEvents = entry.linkedTransfer ? 'none' : 'auto';
+  document.getElementById('edit-type-expense').style.opacity = entry.linkedTransfer ? '0.5' : '1';
+  document.getElementById('edit-type-income').style.opacity = entry.linkedTransfer ? '0.5' : '1';
+
+  document.getElementById('edit-entry-modal').classList.add('open');
+}
+
+function setEditEntryType(type) {
+  document.getElementById('edit-type-expense').classList.toggle('active', type==='expense');
+  document.getElementById('edit-type-income').classList.toggle('active', type==='income');
+  document.getElementById('edit-entry-modal').dataset.type = type;
+  updateEditFieldVisibility();
+}
+
+function setEditEntryAccount(acct) {
+  document.getElementById('edit-acct-personal').classList.toggle('active', acct==='Personal');
+  document.getElementById('edit-acct-cek').classList.toggle('active', acct==='CEK');
+  document.getElementById('edit-entry-modal').dataset.account = acct;
+  updateEditFieldVisibility();
+}
+
+function updateEditFieldVisibility() {
+  const acct = document.getElementById('edit-entry-modal').dataset.account;
+  const type = document.getElementById('edit-entry-modal').dataset.type;
+  const isCek = acct==='CEK';
+  document.getElementById('edit-project-group').style.display = isCek ? 'block' : 'none';
+  document.getElementById('edit-supplier-group').style.display = (isCek && type==='expense') ? 'block' : 'none';
+  document.getElementById('edit-client-group').style.display = (isCek && type==='income') ? 'block' : 'none';
+}
+
+function saveEditedEntry() {
+  if (editingEntryIdx===null) return;
+  const entry = state.entries[editingEntryIdx];
+  if (!entry) return;
+
+  const amount = parseFloat(document.getElementById('edit-amount').value);
+  if (!amount || amount<=0) { showToast('Enter a valid amount', true); return; }
+  const category = document.getElementById('edit-category').value.trim();
+  if (!category) { showToast('Enter a category', true); return; }
+
+  const newType = document.getElementById('edit-entry-modal').dataset.type;
+  const newAccount = document.getElementById('edit-entry-modal').dataset.account;
+  const project = document.getElementById('edit-project').value.trim();
+  const supplier = document.getElementById('edit-supplier').value.trim();
+  const client = document.getElementById('edit-client').value.trim();
+  const description = document.getElementById('edit-desc').value.trim();
+  const date = document.getElementById('edit-date').value;
+
+  if (entry.linkedTransfer) {
+    // Keep both sides of a transfer in sync — only amount, project, description, and date are editable
+    const linkId = entry.linkedTransfer;
+    state.entries.forEach(e => {
+      if (e.linkedTransfer===linkId) {
+        e.amount = amount;
+        e.project = project;
+        e.description = description;
+        e.date = date;
+      }
+    });
+    // Keep any matching Cash Savings adjustment amount in sync too
+    (state.cashSavingsAdjustments||[]).forEach(a=>{
+      if (a.id.startsWith(linkId)) { a.amount = a.amount<0 ? -amount : amount; a.date = date; }
+    });
+  } else {
+    entry.type = newType;
+    entry.account = newAccount;
+    entry.category = category;
+    entry.project = newAccount==='CEK' ? project : '';
+    entry.supplier = (newAccount==='CEK' && newType==='expense') ? supplier : '';
+    entry.client = (newAccount==='CEK' && newType==='income') ? client : '';
+    entry.description = description;
+    entry.date = date;
+    // Auto-create the project if it's new, same as when adding a fresh entry
+    if (newAccount==='CEK' && project) ensureProjectExists(project, newType==='income' ? client : '');
+    // Keep the linked clientPayments record in sync if this is CEK income with a client
+    if (newType==='income' && newAccount==='CEK' && client) {
+      const cp = state.clientPayments.find(cp=>cp.id===entry.id);
+      if (cp) { cp.client=client; cp.project=project; cp.amount=amount; cp.date=date; cp.description=description; }
+      else { state.clientPayments.unshift({ id:entry.id, client, project, amount, date, description }); if (!state.clients.includes(client)) state.clients.push(client); }
+    } else {
+      // No longer a client payment (changed away from CEK income) — remove any stale record
+      state.clientPayments = state.clientPayments.filter(cp=>cp.id!==entry.id);
+    }
+  }
+
+  saveState();
+  closeModal('edit-entry-modal');
+  renderAll();
+  showToast('✅ Entry updated');
+}
+
+function deleteFromEditModal() {
+  if (editingEntryIdx===null) return;
+  const idx = editingEntryIdx;
+  closeModal('edit-entry-modal');
+  confirmDelete(idx);
+}
+
 function confirmDelete(idx) {
   const entry = state.entries[idx];
   if (!entry) return;
