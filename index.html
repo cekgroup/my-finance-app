@@ -742,6 +742,11 @@
       <input type="text" class="form-input" id="ns-role" placeholder="e.g. Tiling, Electrical, Aluminum...">
     </div>
     <div class="form-group">
+      <label class="form-label">WhatsApp phone number (optional)</label>
+      <input type="tel" class="form-input" id="ns-phone" placeholder="e.g. +96170123456">
+      <div style="font-size:11px;color:var(--text3);margin-top:5px">Include country code. Used to send WhatsApp payment receipts.</div>
+    </div>
+    <div class="form-group">
       <label class="form-label">Total agreed budget ($)</label>
       <input type="number" inputmode="decimal" class="form-input" id="ns-budget" placeholder="0">
     </div>
@@ -857,9 +862,25 @@
   </div>
 </div>
 
+<!-- WHATSAPP RECEIPT MODAL -->
+<div class="modal-overlay" id="receipt-modal" onclick="closeModal('receipt-modal',event)">
+  <div class="modal-sheet">
+    <div class="modal-handle"></div>
+    <div class="modal-title">📄 Send payment receipt?</div>
+    <div id="receipt-summary" style="background:var(--bg3);border-radius:var(--radius-sm);padding:14px;margin-bottom:16px;font-size:13px;color:var(--text2);line-height:1.6"></div>
+    <div class="form-group" id="receipt-no-phone-group" style="display:none">
+      <label class="form-label" id="receipt-phone-label">WhatsApp number</label>
+      <input type="tel" class="form-input" id="receipt-phone-input" placeholder="e.g. +96170123456">
+    </div>
+    <button class="submit-btn" onclick="generateAndSendReceipt()">📄 Generate PDF & open WhatsApp</button>
+    <button class="btn-secondary" onclick="closeModal('receipt-modal')">Not now</button>
+  </div>
+</div>
+
 <!-- TOAST -->
 <div class="toast" id="toast"></div>
 
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js"></script>
 <script>
 // ─── DEFAULT DATA ─────────────────────────────────────────────────────────────
 const DEFAULT_PERSONAL_EXP_CATS = [
@@ -1461,6 +1482,15 @@ function renderSupplierDetail() {
       <div style="font-size:13px;color:var(--text2);margin-top:3px">${sup.role||''} · ${p.name}</div>
       ${sup.notes?`<div style="font-size:12px;color:var(--text3);margin-top:4px">${sup.notes}</div>`:''}
     </div>
+    <div class="card" style="margin-bottom:12px">
+      <div class="form-group" style="margin-bottom:0">
+        <label class="form-label">📱 WhatsApp number</label>
+        <div style="display:flex;gap:8px">
+          <input type="tel" class="form-input" id="sup-phone-${sup.id}" value="${sup.phone||''}" placeholder="e.g. +96170123456" style="flex:1">
+          <button onclick="updateSupplierPhone('${p.id}','${sup.id}')" style="padding:13px 16px;background:var(--accent);border:none;border-radius:var(--radius-sm);color:white;font-size:13px;font-weight:700;font-family:inherit;cursor:pointer;white-space:nowrap">Save</button>
+        </div>
+      </div>
+    </div>
     <div class="grid2" style="margin-bottom:12px">
       <div class="mini-card"><div class="mini-label">🏦 Agreed budget</div><div class="mini-value yellow" style="font-size:18px">${fmt(sup.budget||0)}</div></div>
       <div class="mini-card"><div class="mini-label">💸 Total paid</div><div class="mini-value red" style="font-size:18px">${fmt(paid)}</div></div>
@@ -1482,16 +1512,19 @@ function renderSupplierDetail() {
     html += [...sup.payments].reverse().map((pay,ri)=>{
       const realIdx = sup.payments.length-1-ri;
       const d = new Date(pay.date+'T00:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'});
+      const receiptBadge = pay.receiptSent ? '<span style="color:#25D366;font-size:10px;margin-left:6px">✓ receipt sent</span>' : '';
       return `<div class="pay-item">
-        <div><div class="pay-date">📅 ${d}</div>${pay.note?`<div class="pay-note">${pay.note}</div>`:''}</div>
-        <div style="display:flex;align-items:center;gap:10px">
+        <div><div class="pay-date">📅 ${d}${receiptBadge}</div>${pay.note?`<div class="pay-note">${pay.note}</div>`:''}</div>
+        <div style="display:flex;align-items:center;gap:8px">
           <div class="pay-amt">-${fmt(pay.amount)}</div>
+          <button onclick="resendReceipt('${p.id}','${sup.id}',${realIdx})" title="Send receipt" style="border:none;background:rgba(37,211,102,.12);color:#25D366;border-radius:6px;padding:4px 8px;font-size:12px;cursor:pointer">📄</button>
           <button onclick="deletePayment('${p.id}','${sup.id}',${realIdx})" style="border:none;background:rgba(255,101,132,.1);color:var(--red);border-radius:6px;padding:4px 8px;font-size:11px;cursor:pointer">✕</button>
         </div>
       </div>`;
     }).join('');
     html += '</div>';
   }
+
 
   document.getElementById('supplier-detail-content').innerHTML = html;
 }
@@ -1584,7 +1617,7 @@ function deleteProjectFromList(id) {
 
 function openNewSupplierModal(projectId) {
   state.activeProjectId = projectId;
-  ['ns-name','ns-role','ns-budget','ns-notes'].forEach(id=>document.getElementById(id).value='');
+  ['ns-name','ns-role','ns-phone','ns-budget','ns-notes'].forEach(id=>document.getElementById(id).value='');
   // populate autocomplete
   document.getElementById('ns-names-list').innerHTML = state.suppliers.map(s=>`<option value="${s}">`).join('');
   document.getElementById('newsupplier-modal').classList.add('open');
@@ -1601,6 +1634,7 @@ function saveSupplier() {
     id: Date.now().toString(),
     name,
     role: document.getElementById('ns-role').value.trim(),
+    phone: document.getElementById('ns-phone').value.trim(),
     budget: parseFloat(document.getElementById('ns-budget').value)||0,
     notes: document.getElementById('ns-notes').value.trim(),
     payments: []
@@ -1612,6 +1646,7 @@ function saveSupplier() {
   renderProjectDetail();
   showToast(`✅ ${name} added`);
 }
+
 
 function deleteSupplier(projectId, supplierId) {
   const p = state.cekProjects.find(p=>p.id===projectId);
@@ -1679,6 +1714,168 @@ function logPayment() {
   renderSupplierDetail();
   renderAll();
   showToast(`✅ ${fmt(amount)} paid to ${sup.name}`);
+  // Offer to send a WhatsApp receipt right away
+  setTimeout(()=>openReceiptPrompt(p.id, sup.id, payment.id), 500);
+}
+
+
+function updateSupplierPhone(projectId, supplierId) {
+  const p = state.cekProjects.find(p=>p.id===projectId);
+  const sup = p?(p.suppliers||[]).find(s=>s.id===supplierId):null;
+  if (!sup) return;
+  const val = document.getElementById('sup-phone-'+supplierId).value.trim();
+  sup.phone = val;
+  saveState();
+  showToast(val ? '✅ Phone number saved' : 'Phone number cleared');
+}
+
+// ─── WHATSAPP PDF RECEIPTS ──────────────────────────────────────────────────────
+let receiptContext = null; // { projectId, supplierId, paymentId }
+
+function openReceiptPrompt(projectId, supplierId, paymentId) {
+  const p = state.cekProjects.find(p=>p.id===projectId);
+  const sup = p?(p.suppliers||[]).find(s=>s.id===supplierId):null;
+  const pay = sup?(sup.payments||[]).find(pp=>pp.id===paymentId):null;
+  if (!p || !sup || !pay) return;
+  receiptContext = { projectId, supplierId, paymentId };
+
+  document.getElementById('receipt-summary').innerHTML =
+    `<strong>${sup.name}</strong> · ${sup.role||''}<br>${p.name}<br>Amount: <strong>${fmt(pay.amount)}</strong> · ${new Date(pay.date+'T00:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})}`;
+
+  const hasPhone = !!(sup.phone && sup.phone.trim());
+  document.getElementById('receipt-no-phone-group').style.display = hasPhone ? 'none' : 'block';
+  document.getElementById('receipt-phone-label').textContent = `WhatsApp number for ${sup.name}`;
+  document.getElementById('receipt-phone-input').value = '';
+
+  document.getElementById('receipt-modal').classList.add('open');
+}
+
+function resendReceipt(projectId, supplierId, payIdx) {
+  const p = state.cekProjects.find(p=>p.id===projectId);
+  const sup = p?(p.suppliers||[]).find(s=>s.id===supplierId):null;
+  const pay = sup?sup.payments[payIdx]:null;
+  if (!pay) return;
+  openReceiptPrompt(projectId, supplierId, pay.id);
+}
+
+async function generateAndSendReceipt() {
+  if (!receiptContext) return;
+  const p = state.cekProjects.find(p=>p.id===receiptContext.projectId);
+  const sup = p?(p.suppliers||[]).find(s=>s.id===receiptContext.supplierId):null;
+  const pay = sup?(sup.payments||[]).find(pp=>pp.id===receiptContext.paymentId):null;
+  if (!p || !sup || !pay) return;
+
+  let phone = sup.phone && sup.phone.trim();
+  if (!phone) {
+    phone = document.getElementById('receipt-phone-input').value.trim();
+    if (!phone) { showToast('Enter a WhatsApp number',true); return; }
+    // Save it on the supplier for next time
+    sup.phone = phone;
+    saveState();
+  }
+  // Clean phone for wa.me format — digits only, no +, spaces, or dashes
+  const cleanPhone = phone.replace(/[^0-9]/g,'');
+  if (cleanPhone.length < 8) { showToast('That phone number looks too short',true); return; }
+
+  showToast('Generating PDF...');
+  try {
+    const pdfBytes = await buildReceiptPDF(p, sup, pay);
+    const blob = new Blob([pdfBytes], { type: 'application/pdf' });
+    const fileName = `Receipt_${sup.name.replace(/\s+/g,'_')}_${pay.date}.pdf`;
+
+    // Trigger the PDF download to the device
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = fileName; a.click();
+    setTimeout(()=>URL.revokeObjectURL(url), 5000);
+
+    // Mark this payment as having a receipt generated, for record-keeping
+    pay.receiptSent = true;
+    pay.receiptSentAt = new Date().toISOString();
+    saveState();
+
+    // Open WhatsApp with the chat ready and a pre-filled message
+    const message = `Hi ${sup.name}, here's your payment receipt:\n` +
+      `Project: ${p.name}\n` +
+      `Amount: ${fmt(pay.amount)}\n` +
+      `Date: ${new Date(pay.date+'T00:00:00').toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'})}\n` +
+      (pay.note ? `Note: ${pay.note}\n` : '') +
+      `\nPlease find the PDF receipt attached.`;
+    const waUrl = `https://wa.me/${cleanPhone}?text=${encodeURIComponent(message)}`;
+
+    closeModal('receipt-modal');
+    showToast('✅ PDF downloaded — opening WhatsApp...');
+    setTimeout(()=>{ window.open(waUrl, '_blank'); }, 800);
+  } catch(e) {
+    showToast('Could not generate PDF: '+e.message, true);
+  }
+}
+
+async function buildReceiptPDF(project, supplier, payment) {
+  const { PDFDocument, rgb, StandardFonts } = PDFLib;
+  const doc = await PDFDocument.create();
+  const page = doc.addPage([400, 560]);
+  const font = await doc.embedFont(StandardFonts.Helvetica);
+  const fontBold = await doc.embedFont(StandardFonts.HelveticaBold);
+
+  const accent = rgb(0.42, 0.39, 1);
+  const dark = rgb(0.12, 0.12, 0.18);
+  const gray = rgb(0.45, 0.45, 0.5);
+  const lightGray = rgb(0.85, 0.85, 0.88);
+
+  let y = 510;
+  const left = 40;
+  const right = 360;
+
+  // Header band
+  page.drawRectangle({ x:0, y:500, width:400, height:60, color: accent });
+  page.drawText('PAYMENT RECEIPT', { x:left, y:530, size:18, font:fontBold, color: rgb(1,1,1) });
+  page.drawText('CEK Group', { x:left, y:512, size:10, font, color: rgb(1,1,1) });
+
+  y = 470;
+  page.drawText('Paid to', { x:left, y, size:9, font, color: gray }); y-=16;
+  page.drawText(supplier.name, { x:left, y, size:16, font:fontBold, color: dark }); y-=16;
+  if (supplier.role) { page.drawText(supplier.role, { x:left, y, size:10, font, color: gray }); y-=24; } else { y-=8; }
+
+  page.drawLine({ start:{x:left,y}, end:{x:right,y}, thickness:1, color: lightGray }); y-=24;
+
+  const rows = [
+    ['Project', project.name],
+    ['Amount paid', fmt(payment.amount)],
+    ['Date', new Date(payment.date+'T00:00:00').toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'})],
+    ['Receipt #', payment.id.slice(-8).toUpperCase()],
+  ];
+  rows.forEach(([label,val])=>{
+    page.drawText(label, { x:left, y, size:10, font, color: gray });
+    page.drawText(String(val), { x:left+130, y, size:11, font:fontBold, color: dark });
+    y -= 22;
+  });
+
+  if (payment.note) {
+    y -= 6;
+    page.drawText('Note', { x:left, y, size:10, font, color: gray }); y-=16;
+    const words = payment.note.split(' ');
+    let line = '';
+    words.forEach(w=>{
+      const test = line ? line+' '+w : w;
+      if (font.widthOfTextAtSize(test, 10) > 300) { page.drawText(line, {x:left,y,size:10,font,color:dark}); y-=14; line=w; }
+      else line = test;
+    });
+    if (line) { page.drawText(line, {x:left,y,size:10,font,color:dark}); y-=14; }
+  }
+
+  y -= 10;
+  page.drawLine({ start:{x:left,y}, end:{x:right,y}, thickness:1, color: lightGray }); y-=30;
+
+  // Big amount confirmation box
+  page.drawRectangle({ x:left, y:y-40, width:right-left, height:50, color: rgb(0.96,0.96,0.99), borderColor: accent, borderWidth:1 });
+  page.drawText('TOTAL PAID', { x:left+16, y:y-15, size:9, font, color: gray });
+  page.drawText(fmt(payment.amount), { x:left+16, y:y-34, size:20, font:fontBold, color: accent });
+  y -= 70;
+
+  page.drawText(`Generated ${new Date().toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})} via My Finance app`, { x:left, y:30, size:8, font, color: gray });
+
+  return await doc.save();
 }
 
 function deletePayment(projectId, supplierId, payIdx) {
