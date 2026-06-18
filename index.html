@@ -882,7 +882,8 @@
       <label class="form-label" id="receipt-phone-label">WhatsApp number</label>
       <input type="tel" class="form-input" id="receipt-phone-input" placeholder="e.g. +96170123456">
     </div>
-    <button class="submit-btn" onclick="generateAndSendReceipt()">📄 Generate PDF & open WhatsApp</button>
+    <button class="submit-btn" onclick="generateAndSendReceipt()">📄 Generate PDF & Share</button>
+    <div style="font-size:11px;color:var(--text3);text-align:center;margin:-8px 0 14px">Opens the share sheet with the PDF ready — pick WhatsApp and the contact to send to.</div>
     <button class="btn-secondary" onclick="closeModal('receipt-modal');showPage('home')">Not now</button>
   </div>
 </div>
@@ -1744,6 +1745,37 @@ function updateSupplierPhone(projectId, supplierId) {
 // ─── WHATSAPP PDF RECEIPTS ──────────────────────────────────────────────────────
 let receiptContext = null; // { kind:'supplier', projectId, supplierId, paymentId } OR { kind:'client', entryId }
 
+// Tries the iOS/Android native Share Sheet with the PDF file already attached, so the person
+// just taps the WhatsApp icon in the sheet and hits send — no separate download+attach step.
+// Falls back to download + wa.me chat-only link on browsers that don't support file sharing
+// (e.g. desktop Safari/Chrome, or very old mobile browsers).
+async function shareReceiptFile(blob, fileName, message, cleanPhone) {
+  const file = new File([blob], fileName, { type: 'application/pdf' });
+  const canShareFiles = navigator.canShare && navigator.canShare({ files: [file] });
+
+  if (canShareFiles) {
+    try {
+      await navigator.share({ files: [file], text: message, title: fileName });
+      showToast('✅ Receipt shared');
+      showPage('home');
+      return;
+    } catch (e) {
+      // User cancelled the share sheet, or it failed — fall through to the backup method below
+      if (e.name === 'AbortError') { showPage('home'); return; }
+    }
+  }
+
+  // Fallback: download the PDF, then open WhatsApp chat with the message pre-filled
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = fileName; a.click();
+  setTimeout(()=>URL.revokeObjectURL(url), 5000);
+  const waUrl = `https://wa.me/${cleanPhone}?text=${encodeURIComponent(message+' (PDF receipt downloaded — please attach it manually)')}`;
+  showToast('✅ PDF downloaded — opening WhatsApp...');
+  setTimeout(()=>{ window.open(waUrl, '_blank'); showPage('home'); }, 800);
+}
+
+
 function openReceiptPrompt(projectId, supplierId, paymentId) {
   const p = state.cekProjects.find(p=>p.id===projectId);
   const sup = p?(p.suppliers||[]).find(s=>s.id===supplierId):null;
@@ -1823,26 +1855,15 @@ async function generateAndSendSupplierReceipt() {
     });
     const blob = new Blob([pdfBytes], { type: 'application/pdf' });
     const fileName = `Receipt_${sup.name.replace(/\s+/g,'_')}_${pay.date}.pdf`;
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url; a.download = fileName; a.click();
-    setTimeout(()=>URL.revokeObjectURL(url), 5000);
 
     pay.receiptSent = true;
     pay.receiptSentAt = new Date().toISOString();
     saveState();
 
-    const message = `Hi ${sup.name}, here's your payment receipt:\n` +
-      `Project: ${p.name}\n` +
-      `Amount: ${fmt(pay.amount)}\n` +
-      `Date: ${new Date(pay.date+'T00:00:00').toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'})}\n` +
-      (pay.note ? `Note: ${pay.note}\n` : '') +
-      `\nPlease find the PDF receipt attached.`;
-    const waUrl = `https://wa.me/${cleanPhone}?text=${encodeURIComponent(message)}`;
+    const message = `Hi ${sup.name}, here's your payment receipt for ${p.name} — ${fmt(pay.amount)} on ${new Date(pay.date+'T00:00:00').toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'})}.`;
 
     closeModal('receipt-modal');
-    showToast('✅ PDF downloaded — opening WhatsApp...');
-    setTimeout(()=>{ window.open(waUrl, '_blank'); showPage('home'); }, 800);
+    await shareReceiptFile(blob, fileName, message, cleanPhone);
   } catch(e) {
     showToast('Could not generate PDF: '+e.message, true);
   }
@@ -1878,26 +1899,15 @@ async function generateAndSendClientReceipt() {
     });
     const blob = new Blob([pdfBytes], { type: 'application/pdf' });
     const fileName = `Receipt_${clientName.replace(/\s+/g,'_')}_${entry.date}.pdf`;
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url; a.download = fileName; a.click();
-    setTimeout(()=>URL.revokeObjectURL(url), 5000);
 
     entry.receiptSent = true;
     entry.receiptSentAt = new Date().toISOString();
     saveState();
 
-    const message = `Hi ${clientName}, here's your payment receipt:\n` +
-      (entry.project ? `Project: ${entry.project}\n` : '') +
-      `Amount received: ${fmt(entry.amount)}\n` +
-      `Date: ${new Date(entry.date+'T00:00:00').toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'})}\n` +
-      (entry.description ? `Note: ${entry.description}\n` : '') +
-      `\nThank you! Please find the PDF receipt attached.`;
-    const waUrl = `https://wa.me/${cleanPhone}?text=${encodeURIComponent(message)}`;
+    const message = `Hi ${clientName}, here's your payment receipt${entry.project?' for '+entry.project:''} — ${fmt(entry.amount)} received on ${new Date(entry.date+'T00:00:00').toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'})}. Thank you!`;
 
     closeModal('receipt-modal');
-    showToast('✅ PDF downloaded — opening WhatsApp...');
-    setTimeout(()=>{ window.open(waUrl, '_blank'); showPage('home'); }, 800);
+    await shareReceiptFile(blob, fileName, message, cleanPhone);
   } catch(e) {
     showToast('Could not generate PDF: '+e.message, true);
   }
