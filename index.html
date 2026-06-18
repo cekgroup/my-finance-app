@@ -358,18 +358,28 @@
             <input type="text" class="form-input" id="f-project" placeholder="e.g. Foyer Ebrine, Atelier 33..." list="projects-list">
             <datalist id="projects-list"></datalist>
           </div>
-          <div class="form-group" style="margin-bottom:0">
+          <div class="form-group" style="margin-bottom:0" id="f-supplier-group">
             <label class="form-label">Supplier / Worker</label>
-            <input type="text" class="form-input" id="f-supplier" placeholder="e.g. Rami Hassani, Grg Slim..." list="suppliers-list">
+            <input type="text" class="form-input" id="f-supplier" placeholder="e.g. Rami Hassani, Grg Slim..." list="suppliers-list" oninput="checkNewSupplierPhone()">
             <datalist id="suppliers-list"></datalist>
+          </div>
+          <div class="form-group" id="f-supplier-phone-group" style="display:none;margin-top:10px;margin-bottom:0">
+            <label class="form-label">📱 <span id="f-supplier-phone-label">Their</span> WhatsApp number (optional)</label>
+            <input type="tel" class="form-input" id="f-supplier-phone" placeholder="e.g. +96170123456">
+            <div style="font-size:11px;color:var(--text3);margin-top:5px">New name — saved with this supplier for sending receipts.</div>
           </div>
         </div>
         <!-- Income mode: client + project -->
         <div id="cek-income-fields" style="display:none">
-          <div class="form-group" style="margin-bottom:10px">
+          <div class="form-group" style="margin-bottom:10px" id="f-client-group">
             <label class="form-label">Client name</label>
-            <input type="text" class="form-input" id="f-client" placeholder="e.g. Tony Nahed" list="clients-list">
+            <input type="text" class="form-input" id="f-client" placeholder="e.g. Tony Nahed" list="clients-list" oninput="checkNewClientPhone()">
             <datalist id="clients-list"></datalist>
+          </div>
+          <div class="form-group" id="f-client-phone-group" style="display:none;margin-bottom:10px">
+            <label class="form-label">📱 <span id="f-client-phone-label">Their</span> WhatsApp number (optional)</label>
+            <input type="tel" class="form-input" id="f-client-phone" placeholder="e.g. +96170123456">
+            <div style="font-size:11px;color:var(--text3);margin-top:5px">New name — saved with this client for sending receipts.</div>
           </div>
           <div class="form-group" style="margin-bottom:0">
             <label class="form-label">Project name</label>
@@ -873,7 +883,7 @@
       <input type="tel" class="form-input" id="receipt-phone-input" placeholder="e.g. +96170123456">
     </div>
     <button class="submit-btn" onclick="generateAndSendReceipt()">📄 Generate PDF & open WhatsApp</button>
-    <button class="btn-secondary" onclick="closeModal('receipt-modal')">Not now</button>
+    <button class="btn-secondary" onclick="closeModal('receipt-modal');showPage('home')">Not now</button>
   </div>
 </div>
 
@@ -918,6 +928,7 @@ let state = {
   projects: [],    // autocomplete list (strings)
   suppliers: [],   // autocomplete list (strings)
   clients: [],     // autocomplete list (strings) — CEK clients
+  clientPhones: {}, // { clientName: phoneNumber } — for sending WhatsApp receipts to clients
   cekProjects: [], // full project objects with suppliers & payments
   clientPayments: [], // {id, client, project, amount, date, description}
   goldPurchases: [],  // {id, weight, paid, date, note}
@@ -977,6 +988,7 @@ function loadState() {
     if (!state.projects) state.projects = [];
     if (!state.suppliers) state.suppliers = [];
     if (!state.clients) state.clients = [];
+    if (!state.clientPhones) state.clientPhones = {};
     if (!state.cekProjects) state.cekProjects = [];
     if (!state.clientPayments) state.clientPayments = [];
     if (!state.goldPurchases) state.goldPurchases = [];
@@ -1730,14 +1742,14 @@ function updateSupplierPhone(projectId, supplierId) {
 }
 
 // ─── WHATSAPP PDF RECEIPTS ──────────────────────────────────────────────────────
-let receiptContext = null; // { projectId, supplierId, paymentId }
+let receiptContext = null; // { kind:'supplier', projectId, supplierId, paymentId } OR { kind:'client', entryId }
 
 function openReceiptPrompt(projectId, supplierId, paymentId) {
   const p = state.cekProjects.find(p=>p.id===projectId);
   const sup = p?(p.suppliers||[]).find(s=>s.id===supplierId):null;
   const pay = sup?(sup.payments||[]).find(pp=>pp.id===paymentId):null;
   if (!p || !sup || !pay) return;
-  receiptContext = { projectId, supplierId, paymentId };
+  receiptContext = { kind:'supplier', projectId, supplierId, paymentId };
 
   document.getElementById('receipt-summary').innerHTML =
     `<strong>${sup.name}</strong> · ${sup.role||''}<br>${p.name}<br>Amount: <strong>${fmt(pay.amount)}</strong> · ${new Date(pay.date+'T00:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})}`;
@@ -1745,6 +1757,22 @@ function openReceiptPrompt(projectId, supplierId, paymentId) {
   const hasPhone = !!(sup.phone && sup.phone.trim());
   document.getElementById('receipt-no-phone-group').style.display = hasPhone ? 'none' : 'block';
   document.getElementById('receipt-phone-label').textContent = `WhatsApp number for ${sup.name}`;
+  document.getElementById('receipt-phone-input').value = '';
+
+  document.getElementById('receipt-modal').classList.add('open');
+}
+
+function openClientReceiptPrompt(entryId) {
+  const entry = state.entries.find(e=>e.id===entryId);
+  if (!entry || !entry.client) return;
+  receiptContext = { kind:'client', entryId };
+
+  document.getElementById('receipt-summary').innerHTML =
+    `<strong>${entry.client}</strong>${entry.project?' · '+entry.project:''}<br>Amount received: <strong>${fmt(entry.amount)}</strong> · ${new Date(entry.date+'T00:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})}`;
+
+  const knownPhone = state.clientPhones && state.clientPhones[entry.client];
+  document.getElementById('receipt-no-phone-group').style.display = knownPhone ? 'none' : 'block';
+  document.getElementById('receipt-phone-label').textContent = `WhatsApp number for ${entry.client}`;
   document.getElementById('receipt-phone-input').value = '';
 
   document.getElementById('receipt-modal').classList.add('open');
@@ -1760,6 +1788,11 @@ function resendReceipt(projectId, supplierId, payIdx) {
 
 async function generateAndSendReceipt() {
   if (!receiptContext) return;
+  if (receiptContext.kind==='client') return generateAndSendClientReceipt();
+  return generateAndSendSupplierReceipt();
+}
+
+async function generateAndSendSupplierReceipt() {
   const p = state.cekProjects.find(p=>p.id===receiptContext.projectId);
   const sup = p?(p.suppliers||[]).find(s=>s.id===receiptContext.supplierId):null;
   const pay = sup?(sup.payments||[]).find(pp=>pp.id===receiptContext.paymentId):null;
@@ -1769,32 +1802,36 @@ async function generateAndSendReceipt() {
   if (!phone) {
     phone = document.getElementById('receipt-phone-input').value.trim();
     if (!phone) { showToast('Enter a WhatsApp number',true); return; }
-    // Save it on the supplier for next time
     sup.phone = phone;
     saveState();
   }
-  // Clean phone for wa.me format — digits only, no +, spaces, or dashes
   const cleanPhone = phone.replace(/[^0-9]/g,'');
   if (cleanPhone.length < 8) { showToast('That phone number looks too short',true); return; }
 
   showToast('Generating PDF...');
   try {
-    const pdfBytes = await buildReceiptPDF(p, sup, pay);
+    const pdfBytes = await buildReceiptPDF({
+      title: 'PAYMENT RECEIPT',
+      name: sup.name,
+      subtitle: sup.role || '',
+      project: p.name,
+      amount: pay.amount,
+      date: pay.date,
+      note: pay.note,
+      refId: pay.id,
+      amountLabel: 'TOTAL PAID'
+    });
     const blob = new Blob([pdfBytes], { type: 'application/pdf' });
     const fileName = `Receipt_${sup.name.replace(/\s+/g,'_')}_${pay.date}.pdf`;
-
-    // Trigger the PDF download to the device
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url; a.download = fileName; a.click();
     setTimeout(()=>URL.revokeObjectURL(url), 5000);
 
-    // Mark this payment as having a receipt generated, for record-keeping
     pay.receiptSent = true;
     pay.receiptSentAt = new Date().toISOString();
     saveState();
 
-    // Open WhatsApp with the chat ready and a pre-filled message
     const message = `Hi ${sup.name}, here's your payment receipt:\n` +
       `Project: ${p.name}\n` +
       `Amount: ${fmt(pay.amount)}\n` +
@@ -1805,13 +1842,68 @@ async function generateAndSendReceipt() {
 
     closeModal('receipt-modal');
     showToast('✅ PDF downloaded — opening WhatsApp...');
-    setTimeout(()=>{ window.open(waUrl, '_blank'); }, 800);
+    setTimeout(()=>{ window.open(waUrl, '_blank'); showPage('home'); }, 800);
   } catch(e) {
     showToast('Could not generate PDF: '+e.message, true);
   }
 }
 
-async function buildReceiptPDF(project, supplier, payment) {
+async function generateAndSendClientReceipt() {
+  const entry = state.entries.find(e=>e.id===receiptContext.entryId);
+  if (!entry) return;
+  const clientName = entry.client;
+
+  let phone = state.clientPhones && state.clientPhones[clientName];
+  if (!phone) {
+    phone = document.getElementById('receipt-phone-input').value.trim();
+    if (!phone) { showToast('Enter a WhatsApp number',true); return; }
+    state.clientPhones[clientName] = phone;
+    saveState();
+  }
+  const cleanPhone = phone.replace(/[^0-9]/g,'');
+  if (cleanPhone.length < 8) { showToast('That phone number looks too short',true); return; }
+
+  showToast('Generating PDF...');
+  try {
+    const pdfBytes = await buildReceiptPDF({
+      title: 'PAYMENT RECEIVED',
+      name: clientName,
+      subtitle: '',
+      project: entry.project || '',
+      amount: entry.amount,
+      date: entry.date,
+      note: entry.description,
+      refId: entry.id,
+      amountLabel: 'TOTAL RECEIVED'
+    });
+    const blob = new Blob([pdfBytes], { type: 'application/pdf' });
+    const fileName = `Receipt_${clientName.replace(/\s+/g,'_')}_${entry.date}.pdf`;
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = fileName; a.click();
+    setTimeout(()=>URL.revokeObjectURL(url), 5000);
+
+    entry.receiptSent = true;
+    entry.receiptSentAt = new Date().toISOString();
+    saveState();
+
+    const message = `Hi ${clientName}, here's your payment receipt:\n` +
+      (entry.project ? `Project: ${entry.project}\n` : '') +
+      `Amount received: ${fmt(entry.amount)}\n` +
+      `Date: ${new Date(entry.date+'T00:00:00').toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'})}\n` +
+      (entry.description ? `Note: ${entry.description}\n` : '') +
+      `\nThank you! Please find the PDF receipt attached.`;
+    const waUrl = `https://wa.me/${cleanPhone}?text=${encodeURIComponent(message)}`;
+
+    closeModal('receipt-modal');
+    showToast('✅ PDF downloaded — opening WhatsApp...');
+    setTimeout(()=>{ window.open(waUrl, '_blank'); showPage('home'); }, 800);
+  } catch(e) {
+    showToast('Could not generate PDF: '+e.message, true);
+  }
+}
+
+async function buildReceiptPDF(opts) {
   const { PDFDocument, rgb, StandardFonts } = PDFLib;
   const doc = await PDFDocument.create();
   const page = doc.addPage([400, 560]);
@@ -1829,21 +1921,21 @@ async function buildReceiptPDF(project, supplier, payment) {
 
   // Header band
   page.drawRectangle({ x:0, y:500, width:400, height:60, color: accent });
-  page.drawText('PAYMENT RECEIPT', { x:left, y:530, size:18, font:fontBold, color: rgb(1,1,1) });
+  page.drawText(opts.title, { x:left, y:530, size:18, font:fontBold, color: rgb(1,1,1) });
   page.drawText('CEK Group', { x:left, y:512, size:10, font, color: rgb(1,1,1) });
 
   y = 470;
-  page.drawText('Paid to', { x:left, y, size:9, font, color: gray }); y-=16;
-  page.drawText(supplier.name, { x:left, y, size:16, font:fontBold, color: dark }); y-=16;
-  if (supplier.role) { page.drawText(supplier.role, { x:left, y, size:10, font, color: gray }); y-=24; } else { y-=8; }
+  page.drawText(opts.title==='PAYMENT RECEIVED' ? 'Received from' : 'Paid to', { x:left, y, size:9, font, color: gray }); y-=16;
+  page.drawText(opts.name, { x:left, y, size:16, font:fontBold, color: dark }); y-=16;
+  if (opts.subtitle) { page.drawText(opts.subtitle, { x:left, y, size:10, font, color: gray }); y-=24; } else { y-=8; }
 
   page.drawLine({ start:{x:left,y}, end:{x:right,y}, thickness:1, color: lightGray }); y-=24;
 
   const rows = [
-    ['Project', project.name],
-    ['Amount paid', fmt(payment.amount)],
-    ['Date', new Date(payment.date+'T00:00:00').toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'})],
-    ['Receipt #', payment.id.slice(-8).toUpperCase()],
+    ['Project', opts.project || '—'],
+    ['Amount', fmt(opts.amount)],
+    ['Date', new Date(opts.date+'T00:00:00').toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'})],
+    ['Receipt #', String(opts.refId).slice(-8).toUpperCase()],
   ];
   rows.forEach(([label,val])=>{
     page.drawText(label, { x:left, y, size:10, font, color: gray });
@@ -1851,10 +1943,10 @@ async function buildReceiptPDF(project, supplier, payment) {
     y -= 22;
   });
 
-  if (payment.note) {
+  if (opts.note) {
     y -= 6;
     page.drawText('Note', { x:left, y, size:10, font, color: gray }); y-=16;
-    const words = payment.note.split(' ');
+    const words = opts.note.split(' ');
     let line = '';
     words.forEach(w=>{
       const test = line ? line+' '+w : w;
@@ -1869,14 +1961,15 @@ async function buildReceiptPDF(project, supplier, payment) {
 
   // Big amount confirmation box
   page.drawRectangle({ x:left, y:y-40, width:right-left, height:50, color: rgb(0.96,0.96,0.99), borderColor: accent, borderWidth:1 });
-  page.drawText('TOTAL PAID', { x:left+16, y:y-15, size:9, font, color: gray });
-  page.drawText(fmt(payment.amount), { x:left+16, y:y-34, size:20, font:fontBold, color: accent });
+  page.drawText(opts.amountLabel, { x:left+16, y:y-15, size:9, font, color: gray });
+  page.drawText(fmt(opts.amount), { x:left+16, y:y-34, size:20, font:fontBold, color: accent });
   y -= 70;
 
   page.drawText(`Generated ${new Date().toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})} via My Finance app`, { x:left, y:30, size:8, font, color: gray });
 
   return await doc.save();
 }
+
 
 function deletePayment(projectId, supplierId, payIdx) {
   if (!confirm('Delete this payment?')) return;
@@ -2303,6 +2396,10 @@ function resetForm() {
   document.getElementById('f-supplier').value='';
   document.getElementById('f-client').value='';
   document.getElementById('f-inc-project').value='';
+  document.getElementById('f-supplier-phone').value='';
+  document.getElementById('f-client-phone').value='';
+  document.getElementById('f-supplier-phone-group').style.display='none';
+  document.getElementById('f-client-phone-group').style.display='none';
   document.getElementById('t-amount').value='';
   document.getElementById('t-reason').value='';
   document.getElementById('t-project').value='';
@@ -2376,6 +2473,48 @@ function updateCEKFields() {
   if (isIncome) {
     document.getElementById('clients-list').innerHTML = state.clients.map(c=>`<option value="${c}">`).join('');
     document.getElementById('projects-list-2').innerHTML = state.projects.map(p=>`<option value="${p}">`).join('');
+  }
+  document.getElementById('f-supplier-phone-group').style.display = 'none';
+  document.getElementById('f-client-phone-group').style.display = 'none';
+  document.getElementById('f-supplier-phone').value = '';
+  document.getElementById('f-client-phone').value = '';
+}
+
+// Looks up an existing supplier's phone across ALL projects (a supplier might be tracked under several)
+function findSupplierPhone(name) {
+  if (!name) return '';
+  for (const p of (state.cekProjects||[])) {
+    const sup = (p.suppliers||[]).find(s=>s.name.toLowerCase()===name.toLowerCase());
+    if (sup && sup.phone) return sup.phone;
+  }
+  return '';
+}
+
+function checkNewSupplierPhone() {
+  const name = document.getElementById('f-supplier').value.trim();
+  const group = document.getElementById('f-supplier-phone-group');
+  const label = document.getElementById('f-supplier-phone-label');
+  if (!name) { group.style.display='none'; return; }
+  const existingPhone = findSupplierPhone(name);
+  if (existingPhone) {
+    // Already known — no need to ask again, just show it's on file
+    group.style.display = 'none';
+  } else {
+    group.style.display = 'block';
+    label.textContent = name + "'s";
+  }
+}
+
+function checkNewClientPhone() {
+  const name = document.getElementById('f-client').value.trim();
+  const group = document.getElementById('f-client-phone-group');
+  const label = document.getElementById('f-client-phone-label');
+  if (!name) { group.style.display='none'; return; }
+  if (state.clientPhones && state.clientPhones[name]) {
+    group.style.display = 'none';
+  } else {
+    group.style.display = 'block';
+    label.textContent = name + "'s";
   }
 }
 
@@ -2540,7 +2679,7 @@ function ensureProjectExists(projectName, client) {
   return proj;
 }
 
-function ensureSupplierExists(projectName, supplierName) {
+function ensureSupplierExists(projectName, supplierName, phone) {
   // Finds or creates a REAL tracked supplier object inside the matching project's suppliers[] list,
   // so any supplier name typed anywhere (Add Entry screen or the dedicated form) always shows up
   // under that project's "Suppliers & workers" section with a real, editable phone number field.
@@ -2549,12 +2688,15 @@ function ensureSupplierExists(projectName, supplierName) {
   if (!proj) return null;
   if (!proj.suppliers) proj.suppliers = [];
   let sup = proj.suppliers.find(s=>s.name.toLowerCase()===supplierName.toLowerCase());
-  if (sup) return sup;
+  if (sup) {
+    if (phone && !sup.phone) sup.phone = phone;
+    return sup;
+  }
   sup = {
     id: Date.now().toString()+Math.floor(Math.random()*1000),
     name: supplierName,
     role: '',
-    phone: '',
+    phone: phone || '',
     budget: 0,
     notes: '',
     payments: [],
@@ -2564,6 +2706,7 @@ function ensureSupplierExists(projectName, supplierName) {
   return sup;
 }
 
+
 function saveEntry() {
   const amount = parseFloat(document.getElementById('f-amount').value);
   if (!amount||amount<=0) { showToast('Enter a valid amount',true); return; }
@@ -2571,18 +2714,21 @@ function saveEntry() {
 
   const isCek = state.formAccount==='CEK';
   const isIncome = state.formType==='income';
-  let project='', supplier='', client='';
+  let project='', supplier='', client='', supplierPhone='', clientPhone='';
 
   if (isCek && isIncome) {
     client = document.getElementById('f-client').value.trim();
     project = document.getElementById('f-inc-project').value.trim();
+    clientPhone = document.getElementById('f-client-phone').value.trim();
     if (client && !state.clients.includes(client)) state.clients.push(client);
+    if (client && clientPhone) state.clientPhones[client] = clientPhone;
     if (project && !state.projects.includes(project)) state.projects.push(project);
     // Auto-create the project in Budget → CEK Projects if it doesn't exist yet
     if (project) ensureProjectExists(project, client);
   } else if (isCek && !isIncome) {
     project = document.getElementById('f-project').value.trim();
     supplier = document.getElementById('f-supplier').value.trim();
+    supplierPhone = document.getElementById('f-supplier-phone').value.trim();
     if (project && !state.projects.includes(project)) state.projects.push(project);
     if (supplier && !state.suppliers.includes(supplier)) state.suppliers.push(supplier);
     // Also auto-create here in case an expense references a brand-new project first
@@ -2611,11 +2757,17 @@ function saveEntry() {
   // If this expense has both a project AND a supplier name, make sure that supplier is a REAL
   // tracked object (with a phone field) inside the project's Suppliers & workers list — and
   // record this expense as an actual payment against them, so their "paid" total is accurate.
+  let linkedSupplierPaymentId = null;
+  let linkedSupplierObj = null, linkedProjectObj = null;
   if (isCek && !isIncome && project && supplier) {
-    const sup = ensureSupplierExists(project, supplier);
+    const sup = ensureSupplierExists(project, supplier, supplierPhone);
     if (sup) {
       if (!sup.payments) sup.payments = [];
-      sup.payments.push({ id: 'entry_'+entry.id, amount, date, note: description });
+      const payRecord = { id: 'entry_'+entry.id, amount, date, note: description };
+      sup.payments.push(payRecord);
+      linkedSupplierPaymentId = payRecord.id;
+      linkedSupplierObj = sup;
+      linkedProjectObj = state.cekProjects.find(p=>p.name===project);
     }
   }
 
@@ -2630,8 +2782,17 @@ function saveEntry() {
   showToast('✅ Saved!');
   resetForm();
   renderAll();
-  setTimeout(()=>showPage('home'),600);
+
+  // Offer to send a WhatsApp receipt right after saving a CEK expense (to a supplier) or CEK income (to a client)
+  if (isCek && !isIncome && linkedProjectObj && linkedSupplierObj) {
+    setTimeout(()=>openReceiptPrompt(linkedProjectObj.id, linkedSupplierObj.id, linkedSupplierPaymentId), 500);
+  } else if (isCek && isIncome && client) {
+    setTimeout(()=>openClientReceiptPrompt(entry.id), 500);
+  } else {
+    setTimeout(()=>showPage('home'),600);
+  }
 }
+
 
 // ─── SAVINGS GOAL ─────────────────────────────────────────────────────────────
 function setGoal() {
